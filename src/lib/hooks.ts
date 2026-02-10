@@ -9,7 +9,7 @@ const POLL_INTERVAL = 8_000; // 8 seconds
 /* ──────────────────────────────────
    useFlowData  –  live option flow
    ────────────────────────────────── */
-export function useFlowData() {
+export function useFlowData(tickers?: string) {
   const [orders, setOrders] = useState<FlowOrder[]>([]);
   const [spotPrices, setSpotPrices] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -19,7 +19,8 @@ export function useFlowData() {
 
   const fetchFlow = useCallback(async () => {
     try {
-      const res = await fetch(`/api/flow?tickers=${DEFAULT_TICKERS}`);
+      const tickerParam = (tickers && tickers.trim()) ? tickers.trim() : DEFAULT_TICKERS;
+      const res = await fetch(`/api/flow?tickers=${encodeURIComponent(tickerParam)}&limit=250&snapLimit=150`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.orders && data.orders.length > 0) {
@@ -39,7 +40,7 @@ export function useFlowData() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tickers]);
 
   useEffect(() => {
     fetchFlow();

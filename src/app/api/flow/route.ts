@@ -20,6 +20,10 @@ export async function GET(req: NextRequest) {
   const tickersParam =
     req.nextUrl.searchParams.get("tickers") ??
     "NVDA,AAPL,TSLA,SPY,META,AMD,SMCI,MSFT,AMZN,GOOGL";
+  const limitParam = req.nextUrl.searchParams.get("limit");
+  const snapLimitParam = req.nextUrl.searchParams.get("snapLimit");
+  const limit = Math.min(500, Math.max(50, parseInt(limitParam ?? "250", 10)));
+  const snapLimit = Math.min(250, Math.max(50, parseInt(snapLimitParam ?? "150", 10)));
   const tickers = tickersParam.split(",").map((t) => t.trim().toUpperCase());
 
   try {
@@ -53,7 +57,7 @@ export async function GET(req: NextRequest) {
 
         const url =
           `${BASE}/v3/snapshot/options/${ticker}` +
-          `?limit=50` +
+          `?limit=${snapLimit}` +
           `&strike_price.gte=${loStrike}` +
           `&strike_price.lte=${hiStrike}` +
           `&expiration_date.gte=${todayStr}` +
@@ -198,7 +202,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({
-      orders: rows.slice(0, 100),
+      orders: rows.slice(0, limit),
       spotPrices,
       timestamp: new Date().toISOString(),
     });
