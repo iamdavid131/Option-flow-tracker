@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { mockFlowOrders, mockDarkPoolTrades } from "@/lib/mock-data";
@@ -46,16 +47,26 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    id: "tools" as const,
+    label: "Tools",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.1 5.1a2.121 2.121 0 11-3-3l5.1-5.1m0 0L3.34 6.99a2.121 2.121 0 113-3l5.08 5.08m0 3.1l6.18-6.18a2.121 2.121 0 113 3L14.52 12.1m0 0l5.08 5.08a2.121 2.121 0 11-3 3l-5.1-5.1" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"flow" | "heatmap" | "darkpool">("flow");
+  const [activeTab, setActiveTab] = useState<"flow" | "heatmap" | "darkpool" | "tools">("flow");
   const [dpSubTab, setDpSubTab] = useState<"darkpool" | "chain">("darkpool");
   const [search, setSearch] = useState("");
   const [activeChip, setActiveChip] = useState("All");
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [mounted, setMounted] = useState(false);
 
   const flowTickerQuery = activeTab === "flow" ? search.trim().toUpperCase() : "";
 
@@ -74,6 +85,10 @@ export default function Home() {
     const nextTheme = saved === "light" || (!saved && prefersLight) ? "light" : "dark";
     setTheme(nextTheme);
     applyTheme(nextTheme);
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
   }, []);
 
   const toggleTheme = () => {
@@ -202,10 +217,16 @@ export default function Home() {
     setWatchlist((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
   };
 
-  return (
-    <div className="relative flex min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+  const floatingControls = (
+    <div className="fixed right-[396px] top-6 z-40 flex items-center gap-2">
       <AlertsToggleButton isOpen={alertsOpen} onToggle={() => setAlertsOpen((v) => !v)} />
       <ThemeToggleButton theme={theme} onToggle={toggleTheme} />
+    </div>
+  );
+
+  return (
+    <div className="relative flex min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+      {mounted ? createPortal(floatingControls, document.body) : null}
       {alertsOpen && (
         <UnusualAlertsBanner
           items={unusualAlerts}
@@ -246,8 +267,9 @@ export default function Home() {
       </aside>
 
       {/* ── Main content ── */}
-      <div className="relative flex-1 mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
+      <div className={`relative flex-1 mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8 ${activeTab === "heatmap" ? "py-2" : "py-6"}`}>
         {/* ── Header ── */}
+        {activeTab !== "heatmap" && (
         <header className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--panel)] text-sm font-bold text-[var(--accent)] ring-1 ring-[var(--border)]">
@@ -301,8 +323,11 @@ export default function Home() {
             )}
           </div>
         </header>
+        )}
 
-        {/* ── Stats Bar ── */}
+        {/* ── Stats Bar + Sentiment Bar ── */}
+        {activeTab !== "heatmap" && (
+        <>
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {(() => {
             const total = totalCalls + totalPuts || 1;
@@ -374,13 +399,16 @@ export default function Home() {
             </span>
           </div>
         </div>
+        </>
+        )}
 
         {/* ── Filters ── */}
+        {activeTab !== "heatmap" && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
           {/* Page title + dark pool sub-tabs */}
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold">
-              {activeTab === "flow" ? "Order Flow" : activeTab === "heatmap" ? "Heatmap" : dpSubTab === "darkpool" ? "Dark Pool" : "Option Chain"}
+              {activeTab === "flow" ? "Order Flow" : activeTab === "heatmap" ? "Heatmap" : activeTab === "tools" ? "Tools" : dpSubTab === "darkpool" ? "Dark Pool" : "Option Chain"}
             </h2>
             {activeTab === "darkpool" && (
               <div className="flex items-center gap-1 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-1">
@@ -427,6 +455,7 @@ export default function Home() {
             </div>
           )}
         </div>
+        )}
 
         {/* ── Error banner ── */}
         {(flowError || dpError) && (
@@ -438,7 +467,7 @@ export default function Home() {
         )}
 
         {/* ── Content ── */}
-        <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+        <div className={`overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] ${activeTab === "heatmap" ? "mt-0" : "mt-4"}`}>
           {(activeTab === "flow" && flowLoading) ||
           (activeTab === "darkpool" && dpLoading) ? (
             <div className="flex items-center justify-center py-20 text-[var(--muted)]">
@@ -466,6 +495,8 @@ export default function Home() {
           ) : activeTab === "flow" ? (
             <FlowTable rows={filteredFlows} />
           ) : activeTab === "heatmap" ? (
+            <GexHeatmapView />
+          ) : activeTab === "tools" ? (
             <HeatmapView flows={flowSource} />
           ) : dpSubTab === "chain" ? (
             <OptionChainView />
@@ -479,7 +510,943 @@ export default function Home() {
 }
 
 /* ================================================================
-   HEATMAP VIEW
+   GEX HEATMAP VIEW  (Gamma / Vex Heatmap)
+   ================================================================ */
+type GexGrid = Record<string, Record<string, number>>;
+type CellDetail = {
+  callOI: number;
+  putOI: number;
+  callGamma: number;
+  putGamma: number;
+  callDelta: number;
+  putDelta: number;
+  callIV: number;
+  putIV: number;
+  callVolume: number;
+  putVolume: number;
+};
+type GexStats = {
+  netGEX: string;
+  netGEXRaw: number;
+  flipPrice: number;
+  topPosWall: { strike: number; gex: string };
+  topNegWall: { strike: number; gex: string };
+  atmStrike: number;
+  totalOI: string;
+  callPutOIRatio: number;
+  netOI: string;
+  totalCallOI: string;
+  totalPutOI: string;
+};
+type GexData = {
+  metric?: "gex" | "vex" | "charm";
+  ticker: string;
+  spotPrice: number;
+  expiryDates: string[];
+  strikes: number[];
+  grid: GexGrid;
+  cellDetails?: Record<string, Record<string, CellDetail>>;
+  stats: GexStats;
+  timestamp: string;
+};
+
+function GexHeatmapView() {
+  const [ticker, setTicker] = useState("SPY");
+  const [tickerInput, setTickerInput] = useState("SPY");
+  const [data, setData] = useState<GexData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expiryCount, setExpiryCount] = useState(5);
+  const [fullColor, setFullColor] = useState(false);
+  const [metric, setMetric] = useState<"gex" | "vex" | "charm">("gex");
+  const [grokOpen, setGrokOpen] = useState(false);
+  const [grokMessages, setGrokMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [grokInput, setGrokInput] = useState("");
+  const [grokLoading, setGrokLoading] = useState(false);
+  const [grokError, setGrokError] = useState<string | null>(null);
+  const [popupCell, setPopupCell] = useState<{ strike: number; expiry: string; x: number; y: number } | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
+  const atmRowRef = useRef<HTMLTableRowElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // ── Replay state ──
+  const [snapshots, setSnapshots] = useState<{ time: Date; data: GexData }[]>([]);
+  const [replayActive, setReplayActive] = useState(false);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replayIndex, setReplayIndex] = useState(0);
+  const [snapshotsLoaded, setSnapshotsLoaded] = useState(false);
+  const snapshotIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Save snapshot to server
+  const saveSnapshot = useCallback(async (t: string, gexData: GexData) => {
+    try {
+      await fetch("/api/gex/snapshots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: t, metric, snapshot: gexData }),
+      });
+    } catch {
+      // silently fail – not critical
+    }
+  }, [metric]);
+
+  // Load persisted snapshots from server
+  const loadSnapshots = useCallback(async (t: string, date?: string) => {
+    try {
+      const url = date
+        ? `/api/gex/snapshots?ticker=${t}&metric=${metric}&date=${date}`
+        : `/api/gex/snapshots?ticker=${t}&metric=${metric}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.snapshots && json.snapshots.length > 0) {
+        const loaded = json.snapshots.map((s: { time: string; data: GexData }) => ({
+          time: new Date(s.time),
+          data: s.data,
+        }));
+        setSnapshots(loaded);
+        setSnapshotsLoaded(true);
+        return loaded.length;
+      }
+    } catch {
+      // silently fail
+    }
+    setSnapshotsLoaded(true);
+    return 0;
+  }, []);
+
+  const fetchGex = useCallback(async (t: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/gex?ticker=${t}&metric=${metric}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      const gexData = json as GexData;
+      setData(gexData);
+      // Save to server
+      saveSnapshot(t, gexData);
+      // Also cache in memory
+      setSnapshots((prev) => {
+        const now = new Date();
+        if (prev.length > 0 && now.getTime() - prev[prev.length - 1].time.getTime() < 30000) {
+          return prev;
+        }
+        return [...prev, { time: now, data: gexData }];
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch");
+    } finally {
+      setLoading(false);
+    }
+  }, [metric, saveSnapshot]);
+
+  useEffect(() => { fetchGex(ticker); }, [ticker, metric, fetchGex]);
+
+  // Load persisted snapshots on mount and ticker change
+  useEffect(() => {
+    loadSnapshots(ticker);
+  }, [ticker, metric, loadSnapshots]);
+
+  useEffect(() => {
+    setSnapshots([]);
+    setReplayActive(false);
+    setReplayPlaying(false);
+    setReplayIndex(0);
+    setSnapshotsLoaded(false);
+  }, [ticker, metric]);
+
+  // Auto-fetch snapshots every 5 min during market hours, 60s otherwise
+  useEffect(() => {
+    const getInterval = () => {
+      const now = new Date();
+      const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const h = et.getHours();
+      const m = et.getMinutes();
+      const mins = h * 60 + m;
+      const isMarketHours = mins >= 570 && mins <= 960; // 9:30 AM - 4:00 PM ET
+      return isMarketHours ? 300000 : 60000; // 5 min during market, 1 min off
+    };
+
+    const interval = getInterval();
+    snapshotIntervalRef.current = setInterval(() => {
+      if (!replayActive) fetchGex(ticker);
+    }, interval);
+    return () => {
+      if (snapshotIntervalRef.current) clearInterval(snapshotIntervalRef.current);
+    };
+  }, [ticker, fetchGex, replayActive]);
+
+  // Replay playback timer
+  useEffect(() => {
+    if (replayPlaying && snapshots.length > 1) {
+      playIntervalRef.current = setInterval(() => {
+        setReplayIndex((prev) => {
+          if (prev >= snapshots.length - 1) {
+            setReplayPlaying(false);
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1500);
+    }
+    return () => {
+      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+    };
+  }, [replayPlaying, snapshots.length]);
+
+  // Toggle replay mode
+  const toggleReplay = async () => {
+    if (replayActive) {
+      setReplayActive(false);
+      setReplayPlaying(false);
+      // Restore to latest live data
+      if (snapshots.length > 0) setData(snapshots[snapshots.length - 1].data);
+    } else {
+      // Load persisted snapshots if not already loaded
+      let snaps = snapshots;
+      if (snapshots.length < 2) {
+        const count = await loadSnapshots(ticker);
+        if (count && count >= 2) {
+          // snapshots state will update, but we need to wait a tick
+          return; // will re-render, user clicks again
+        }
+      }
+      if (snaps.length < 2) return;
+      setReplayActive(true);
+      setReplayIndex(0);
+      setData(snaps[0].data);
+    }
+  };
+
+  // When replay index changes, update displayed data
+  useEffect(() => {
+    if (replayActive && snapshots[replayIndex]) {
+      setData(snapshots[replayIndex].data);
+    }
+  }, [replayIndex, replayActive, snapshots]);
+
+  const fmtReplayTime = (d: Date) =>
+    d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+
+  // Auto-scroll to ATM strike when data loads
+  useEffect(() => {
+    if (data && atmRowRef.current && tableContainerRef.current) {
+      const container = tableContainerRef.current;
+      const row = atmRowRef.current;
+      // Scroll so ATM row is roughly centered vertically
+      const rowTop = row.offsetTop;
+      const containerHeight = container.clientHeight;
+      const scrollTarget = rowTop - containerHeight / 2 + row.clientHeight / 2;
+      container.scrollTo({ top: Math.max(0, scrollTarget), behavior: "smooth" });
+    }
+  }, [data]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = tickerInput.trim().toUpperCase();
+    if (t && t !== ticker) setTicker(t);
+  };
+
+  const sendGrok = async () => {
+    const text = grokInput.trim();
+    if (!text || grokLoading) return;
+    setGrokLoading(true);
+    setGrokError(null);
+
+    const nextMessages = [...grokMessages, { role: "user", content: text }];
+    setGrokMessages(nextMessages);
+    setGrokInput("");
+
+    try {
+      const res = await fetch("/api/grok", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: nextMessages.slice(-12) }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.text) {
+        throw new Error(data?.error ?? "No response from Grok");
+      }
+      setGrokMessages((prev) => [...prev, { role: "assistant", content: String(data.text) }]);
+    } catch (err) {
+      setGrokError(err instanceof Error ? err.message : "Failed to reach Grok");
+    } finally {
+      setGrokLoading(false);
+    }
+  };
+
+  /* ── Cell click popup ── */
+  const handleCellClick = (strike: number, expiry: string, e: React.MouseEvent<HTMLTableCellElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPopupCell({ strike, expiry, x: rect.left + rect.width / 2, y: rect.top });
+  };
+
+  // Close popup on outside click
+  useEffect(() => {
+    if (!popupCell) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".gex-popup")) setPopupCell(null);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [popupCell]);
+
+  /* ── Colour helpers ── */
+  const getCellColor = (val: number, absMax: number) => {
+    if (absMax === 0 || val === 0) return "rgba(255,255,255,0.03)";
+    const raw = Math.abs(val) / absMax;
+    // In normal mode, skip small values. In full-color mode, color everything.
+    if (!fullColor && raw < 0.10) return "rgba(255,255,255,0.03)";
+    // Log scale for the remaining range
+    const norm = Math.min(Math.log1p(raw * 20) / Math.log1p(20), 1);
+    if (val > 0) {
+      // Positive gamma: dark teal → vivid bright cyan (#00FFFF)
+      const r = 0;
+      const g = Math.round(80 + norm * 175);   // 80 → 255
+      const b = Math.round(90 + norm * 165);   // 90 → 255
+      const alpha = 0.25 + norm * 0.70;        // 0.25 → 0.95
+      return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+    } else {
+      // Negative gamma: dark purple → bright magenta
+      const r = Math.round(80 + norm * 175);   // 80 → 255
+      const g = Math.round(10 + norm * 15);    // 10 → 25
+      const b = Math.round(100 + norm * 155);  // 100 → 255
+      const alpha = 0.25 + norm * 0.70;        // 0.25 → 0.95
+      return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+    }
+  };
+
+  const getCellGlow = (val: number, absMax: number) => {
+    if (absMax === 0 || val === 0) return "none";
+    const raw = Math.abs(val) / absMax;
+    const norm = Math.min(Math.log1p(raw * 20) / Math.log1p(20), 1);
+    if (norm < 0.5) return "none";
+    const glowStrength = Math.round((norm - 0.5) / 0.5 * 20) + 4;
+    if (val > 0) {
+      return `inset 0 0 ${glowStrength}px rgba(0, 255, 255, ${(norm * 0.55).toFixed(2)})`;
+    } else {
+      return `inset 0 0 ${glowStrength}px rgba(220, 40, 255, ${(norm * 0.55).toFixed(2)})`;
+    }
+  };
+
+  const getTextColor = (val: number, absMax: number) => {
+    if (absMax === 0) return "var(--muted)";
+    const norm = Math.min(Math.abs(val) / absMax, 1);
+    if (norm > 0.5) return "#fff";
+    return "var(--foreground)";
+  };
+
+  /* ── Format number compactly ── */
+  const fmt = (n: number) => {
+    const abs = Math.abs(n);
+    if (abs >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+    if (abs >= 1e3) return `${(n / 1e3).toFixed(0)}K` === "-0K" ? "0" : `${(n / 1e3).toFixed(0)}K`;
+    return n.toLocaleString();
+  };
+
+  const fmtExpiry = (d: string) => {
+    const dt = new Date(d + "T12:00:00");
+    return dt.toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" }).replace(/\//g, "-");
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-[var(--muted)]">
+        <svg className="mr-3 h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+        </svg>
+        Loading {metric.toUpperCase()} heatmap…
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="px-6 py-12 text-center text-[var(--danger)]">
+        Failed to load {metric.toUpperCase()} data{error ? `: ${error}` : ""}
+      </div>
+    );
+  }
+
+  const { strikes, expiryDates: allExpiryDates, grid, stats, spotPrice } = data;
+  const metricLabel = metric === "gex" ? "GEX" : metric === "vex" ? "VEX" : "Charm";
+  const maxExpiries = allExpiryDates.length;
+  const visibleCount = Math.min(expiryCount, maxExpiries);
+  const expiryDates = allExpiryDates.slice(0, visibleCount);
+
+  const allValues = strikes.flatMap((s) => expiryDates.map((e) => grid[String(s)]?.[e] ?? 0));
+  const absMax = Math.max(...allValues.map(Math.abs), 1);
+
+  return (
+    <div className="p-5">
+      {/* ── Ticker search bar ── */}
+      <div className="mb-5 flex flex-wrap items-center gap-4 relative">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+          <input
+            value={tickerInput}
+            onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+            placeholder="Ticker"
+            className="w-24 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-cyan-400/40"
+          />
+          <button
+            type="submit"
+            className="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-[#0c0f12] hover:brightness-110 transition-all"
+          >
+            Load
+          </button>
+        </form>
+        <span className="text-sm font-semibold">{data.ticker}</span>
+        <span className="text-sm text-[var(--muted)]">${spotPrice.toFixed(2)}</span>
+
+        {/* ── Replay toggle ── */}
+        <button
+          onClick={toggleReplay}
+          disabled={snapshots.length < 2 && !replayActive}
+          title={snapshots.length < 2 ? `Collecting snapshots… (${snapshots.length}/2)` : replayActive ? "Back to live" : "Replay intraday"}
+          className={`ml-2 relative flex items-center justify-center rounded-lg border h-8 w-8 transition-all ${
+            replayActive
+              ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-400"
+              : snapshots.length < 2
+                ? "border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)] opacity-50 cursor-not-allowed"
+                : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--foreground)] hover:bg-[var(--panel)] hover:border-cyan-500/30"
+          }`}
+        >
+          {replayActive ? (
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-50" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.6)]" />
+            </span>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 4v6h6" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
+          )}
+          {!replayActive && snapshots.length >= 2 && (
+            <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan-500 px-1 text-[8px] font-bold text-[#0c0f12]">{snapshots.length}</span>
+          )}
+        </button>
+
+        {/* ── Full color toggle ── */}
+        <button
+          onClick={() => setFullColor((v) => !v)}
+          title={fullColor ? "Show threshold colors" : "Show all cells colored"}
+          className={`flex items-center justify-center rounded-lg border h-8 w-8 transition-all ${
+            fullColor
+              ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-400"
+              : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--foreground)] hover:bg-[var(--panel)] hover:border-cyan-500/30"
+          }`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill={fullColor ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <rect x="7" y="7" width="4" height="4" rx="0.5" />
+            <rect x="13" y="7" width="4" height="4" rx="0.5" />
+            <rect x="7" y="13" width="4" height="4" rx="0.5" />
+            <rect x="13" y="13" width="4" height="4" rx="0.5" />
+          </svg>
+        </button>
+
+        {/* ── GEX Profile toggle ── */}
+        <button
+          onClick={() => setShowProfile((v) => !v)}
+          title={showProfile ? "Hide GEX profile" : "Show GEX profile chart"}
+          className={`flex items-center justify-center rounded-lg border h-8 w-8 transition-all ${
+            showProfile
+              ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-400"
+              : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--foreground)] hover:bg-[var(--panel)] hover:border-cyan-500/30"
+          }`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+          </svg>
+        </button>
+
+        {/* ── Metric buttons ── */}
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1">
+          <button
+            onClick={() => setMetric("gex")}
+            title="GEX (Gamma)"
+            className={`px-3 py-1 text-[10px] font-semibold rounded-full transition-all ${
+              metric === "gex"
+                ? "bg-cyan-500/20 text-cyan-300"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            GEX
+          </button>
+          <button
+            onClick={() => setMetric("vex")}
+            title="VEX (Vega)"
+            className={`px-3 py-1 text-[10px] font-semibold rounded-full transition-all ${
+              metric === "vex"
+                ? "bg-cyan-500/20 text-cyan-300"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            VEX
+          </button>
+          <button
+            onClick={() => setMetric("charm")}
+            title="Charm (Black-Scholes, r=5%)"
+            className={`px-3 py-1 text-[10px] font-semibold rounded-full transition-all ${
+              metric === "charm"
+                ? "bg-cyan-500/20 text-cyan-300"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            Charm
+          </button>
+        </div>
+
+        <span className="ml-auto text-[10px] text-[var(--muted)]">
+          {replayActive && snapshots[replayIndex]
+            ? fmtReplayTime(snapshots[replayIndex].time)
+            : new Date(data.timestamp).toLocaleTimeString()}
+        </span>
+      </div>
+
+      {/* ── Replay timeline ── */}
+      {replayActive && snapshots.length > 1 && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2.5">
+          <button
+            onClick={() => {
+              if (replayPlaying) {
+                setReplayPlaying(false);
+              } else {
+                if (replayIndex >= snapshots.length - 1) setReplayIndex(0);
+                setReplayPlaying(true);
+              }
+            }}
+            className="flex items-center justify-center h-7 w-7 rounded-full border border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-all"
+          >
+            {replayPlaying ? (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="1" y="1" width="3" height="8" rx="0.5" /><rect x="6" y="1" width="3" height="8" rx="0.5" /></svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9" /></svg>
+            )}
+          </button>
+          <span className="text-[10px] text-[var(--muted)] whitespace-nowrap w-16">
+            {fmtReplayTime(snapshots[0].time)}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={snapshots.length - 1}
+            value={replayIndex}
+            onChange={(e) => { setReplayPlaying(false); setReplayIndex(Number(e.target.value)); }}
+            className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, rgb(6, 182, 212) 0%, rgb(6, 182, 212) ${(replayIndex / Math.max(snapshots.length - 1, 1)) * 100}%, rgba(148, 163, 184, 0.25) ${(replayIndex / Math.max(snapshots.length - 1, 1)) * 100}%, rgba(148, 163, 184, 0.25) 100%)`,
+            }}
+          />
+          <span className="text-[10px] text-[var(--muted)] whitespace-nowrap w-16 text-right">
+            {fmtReplayTime(snapshots[snapshots.length - 1].time)}
+          </span>
+          <span className="text-[11px] font-semibold text-cyan-400 ml-1">
+            {replayIndex + 1}/{snapshots.length}
+          </span>
+        </div>
+      )}
+
+      {/* ── Stats row ── */}
+      <div className="mb-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          {[
+            { label: `Net ${metricLabel}`, value: stats.netGEX, color: (stats.netGEXRaw >= 0 ? "text-cyan-400" : "text-purple-400") },
+            { label: "Flip Price", value: `$${stats.flipPrice}`, color: "text-[var(--warning)]" },
+            { label: "Top + Wall", value: `$${stats.topPosWall.strike} (${stats.topPosWall.gex})`, color: "text-cyan-400" },
+            { label: "Top − Wall", value: `$${stats.topNegWall.strike} (${stats.topNegWall.gex})`, color: "text-purple-400" },
+            { label: "Call OI", value: stats.totalCallOI, color: "text-cyan-400" },
+            { label: "Put OI", value: stats.totalPutOI, color: "text-purple-400" },
+          ].map((s) => (
+            <div key={s.label} className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">{s.label}</p>
+              <p className={`mt-0.5 text-sm font-semibold ${s.color}`}>{s.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Legend + Expiration slider ── */}
+      <div className="mb-4 flex items-center gap-6 text-[11px] text-[var(--muted)]">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-3 w-8 rounded" style={{ background: "rgba(0, 255, 255, 0.9)", boxShadow: "inset 0 0 10px rgba(0, 255, 255, 0.5)" }} />
+          Strong +{metricLabel}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-3 w-8 rounded" style={{ background: "rgba(0, 200, 220, 0.3)" }} />
+          +{metricLabel}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-3 w-8 rounded" style={{ background: "rgba(200, 50, 220, 0.3)" }} />
+          −{metricLabel}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-3 w-8 rounded" style={{ background: "rgba(220, 60, 255, 0.9)", boxShadow: "inset 0 0 10px rgba(220, 60, 255, 0.5)" }} />
+          Strong −{metricLabel}
+        </div>
+        <span className="mx-1 h-4 w-px bg-[var(--border)]" />
+        <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">Exps</span>
+        <span className="text-[11px] font-semibold text-cyan-400 w-5 text-right">{visibleCount}</span>
+        <input
+          type="range"
+          min={1}
+          max={maxExpiries}
+          value={visibleCount}
+          onChange={(e) => setExpiryCount(Number(e.target.value))}
+          className="w-48 h-1.5 rounded-full appearance-none cursor-pointer"
+          style={{
+            background: `linear-gradient(to right, rgb(6, 182, 212) 0%, rgb(6, 182, 212) ${((visibleCount - 1) / Math.max(maxExpiries - 1, 1)) * 100}%, rgba(148, 163, 184, 0.25) ${((visibleCount - 1) / Math.max(maxExpiries - 1, 1)) * 100}%, rgba(148, 163, 184, 0.25) 100%)`,
+          }}
+        />
+        <span className="text-[10px] text-[var(--muted)]">{maxExpiries} max</span>
+      </div>
+
+      {/* ── Heatmap grid + Profile column ── */}
+      {(() => {
+        // Compute per-strike net GEX for profile chart
+        const strikeNetGex: Record<number, number> = {};
+        let profileMax = 1;
+        for (const s of strikes) {
+          let net = 0;
+          for (const exp of expiryDates) {
+            net += grid[String(s)]?.[exp] ?? 0;
+          }
+          strikeNetGex[s] = net;
+          profileMax = Math.max(profileMax, Math.abs(net));
+        }
+        const PROFILE_BAR_W = 200; // max bar width in px
+
+        return (
+          <div
+            ref={tableContainerRef}
+            className="overflow-x-auto overflow-y-auto rounded-xl border border-[var(--border)]"
+            style={{ maxHeight: "75vh" }}
+          >
+            <table className="w-full text-[11px]" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead className="sticky top-0 z-20">
+                <tr className="bg-[var(--panel-2)]" style={{ boxShadow: "0 1px 0 var(--border)" }}>
+                  <th className="sticky left-0 z-30 bg-[var(--panel-2)] px-3 py-2 text-center text-[10px] uppercase tracking-[0.15em] font-semibold text-cyan-400 border-r border-[var(--border)]">
+                    Strike
+                  </th>
+                  {expiryDates.map((exp) => (
+                    <th key={exp} className="bg-[var(--panel-2)] px-3 py-2 text-center text-[10px] uppercase tracking-[0.1em] font-semibold text-cyan-300 whitespace-nowrap border-l border-[var(--border)]/30">
+                      {fmtExpiry(exp)}
+                    </th>
+                  ))}
+                  {showProfile && (
+                    <th className="bg-[var(--panel-2)] px-3 py-2 text-center text-[10px] uppercase tracking-[0.15em] font-semibold text-cyan-400 border-l border-[var(--border)]" style={{ minWidth: PROFILE_BAR_W * 2 + 20 }}>
+                      <span className="text-purple-400">− {metricLabel}</span>
+                      <span className="mx-3 text-[var(--muted)]">│</span>
+                      <span className="text-cyan-400">+ {metricLabel}</span>
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {strikes.map((strike) => {
+                  const isATM = strike === stats.atmStrike;
+                  const netGex = strikeNetGex[strike] ?? 0;
+                  const barRatio = Math.abs(netGex) / profileMax;
+                  const barWidth = barRatio * PROFILE_BAR_W;
+                  return (
+                    <tr
+                      key={strike}
+                      ref={isATM ? atmRowRef : undefined}
+                      className={`border-b border-[var(--border)] transition-colors hover:brightness-110 ${
+                        isATM ? "ring-1 ring-inset ring-[var(--warning)]/40" : ""
+                      }`}
+                    >
+                      <td
+                        className={`sticky left-0 z-10 border-r border-[var(--border)] px-3 py-2 text-center font-bold tabular-nums ${
+                          isATM
+                            ? "bg-[var(--warning)]/10 text-[var(--warning)]"
+                            : "bg-[var(--panel)] text-[var(--foreground)]"
+                        }`}
+                      >
+                        {isATM && <span className="mr-1 text-[var(--warning)]">▸</span>}
+                        {strike}
+                      </td>
+                      {expiryDates.map((exp) => {
+                        const val = grid[String(strike)]?.[exp] ?? 0;
+                        const bg = getCellColor(val, absMax);
+                        const fg = getTextColor(val, absMax);
+                        const glow = getCellGlow(val, absMax);
+                        return (
+                          <td
+                            key={exp}
+                            className="px-3 py-2 text-center tabular-nums font-medium whitespace-nowrap border-l border-[var(--border)]/20 cursor-pointer hover:ring-1 hover:ring-inset hover:ring-cyan-400/50"
+                            style={{ background: bg, color: fg, boxShadow: glow }}
+                            title={`Strike ${strike} · ${exp} · ${metricLabel}: ${val.toLocaleString()}`}
+                            onClick={(e) => handleCellClick(strike, exp, e)}
+                          >
+                            {val !== 0 ? fmt(val) : ""}
+                          </td>
+                        );
+                      })}
+                      {showProfile && (
+                        <td className="border-l border-[var(--border)] px-0 py-0" style={{ minWidth: PROFILE_BAR_W * 2 + 20 }}>
+                          <div className="flex" style={{ height: 22, width: "100%" }}>
+                            {/* Left half (negative bars) — label inside bar or right-aligned overlay */}
+                            <div className="relative" style={{ width: "50%", overflow: "hidden" }}>
+                              {barWidth > 1 && netGex < 0 && (
+                                <div
+                                  style={{
+                                    position: "absolute",
+                                    right: 0,
+                                    top: 1,
+                                    width: barWidth,
+                                    height: 20,
+                                    borderRadius: 3,
+                                    background: "rgba(200, 50, 220, 0.8)",
+                                  }}
+                                />
+                              )}
+                              {netGex < 0 && Math.abs(netGex) > profileMax * 0.01 && (
+                                <span
+                                  className="text-[9px] font-medium whitespace-nowrap"
+                                  style={{
+                                    position: "absolute",
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    right: barWidth > 50 ? 4 : barWidth + 4,
+                                    color: barWidth > 50 ? "#fff" : "rgb(200, 120, 240)",
+                                    zIndex: 1,
+                                  }}
+                                >
+                                  {fmt(netGex)}
+                                </span>
+                              )}
+                            </div>
+                            {/* Center divider */}
+                            <div style={{ width: 1, background: "var(--border)", opacity: 0.5, flexShrink: 0 }} />
+                            {/* Right half (positive bars) — label inside bar or left-aligned overlay */}
+                            <div className="relative" style={{ width: "50%", overflow: "hidden" }}>
+                              {barWidth > 1 && netGex > 0 && (
+                                <div
+                                  style={{
+                                    position: "absolute",
+                                    left: 0,
+                                    top: 1,
+                                    width: barWidth,
+                                    height: 20,
+                                    borderRadius: 3,
+                                    background: "rgba(0, 220, 240, 0.8)",
+                                  }}
+                                />
+                              )}
+                              {netGex > 0 && Math.abs(netGex) > profileMax * 0.01 && (
+                                <span
+                                  className="text-[9px] font-medium whitespace-nowrap"
+                                  style={{
+                                    position: "absolute",
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    left: barWidth > 50 ? 4 : barWidth + 4,
+                                    color: barWidth > 50 ? "#fff" : "rgb(100, 220, 240)",
+                                    zIndex: 1,
+                                  }}
+                                >
+                                  {fmt(netGex)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {strikes.length === 0 && (
+                  <tr>
+                    <td colSpan={expiryDates.length + 1 + (showProfile ? 1 : 0)} className="px-4 py-12 text-center text-[var(--muted)]">
+                      No GEX data available.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
+      {/* ── Grok button + panel ── */}
+      <button
+        onClick={() => setGrokOpen((v) => !v)}
+        title="Grok"
+        className={`fixed bottom-5 left-5 z-40 flex h-11 w-11 items-center justify-center rounded-full border transition-all ${
+          grokOpen
+            ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-300"
+            : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--foreground)] hover:bg-[var(--panel)]"
+        }`}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="7" />
+          <path d="M6 18c3-2 9-8 12-12" />
+          <circle cx="17" cy="7" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      {grokOpen && (
+        <div className="fixed bottom-20 left-5 z-40 w-[22rem] rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/40">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+            <div className="text-sm font-semibold">Grok</div>
+            <button
+              onClick={() => setGrokOpen(false)}
+              className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              aria-label="Close Grok"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto px-4 py-3 text-[11px]">
+            {grokMessages.length === 0 ? (
+              <p className="text-[var(--muted)]">Type here for heatmap related and stock questions (contracts, greeks, strikes, etc)</p>
+            ) : (
+              <div className="space-y-2">
+                {grokMessages.map((m, idx) => (
+                  <div
+                    key={`${m.role}-${idx}`}
+                    className={`rounded-lg px-3 py-2 ${m.role === "user"
+                      ? "bg-cyan-500/10 text-[var(--foreground)]"
+                      : "bg-[var(--panel-2)] text-[var(--foreground)]"}
+                    `}
+                  >
+                    {m.content}
+                  </div>
+                ))}
+                {grokLoading && (
+                  <div className="text-[var(--muted)]">Thinking…</div>
+                )}
+              </div>
+            )}
+            {grokError && (
+              <div className="mt-2 text-[10px] text-[var(--danger)]">{grokError}</div>
+            )}
+          </div>
+          <div className="border-t border-[var(--border)] px-4 py-3">
+            <textarea
+              rows={2}
+              value={grokInput}
+              onChange={(e) => setGrokInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendGrok();
+                }
+              }}
+              placeholder="Type here for heatmap related and stock questions (contracts, greeks, strikes, etc)"
+              className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-cyan-400/40"
+            />
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[10px] text-[var(--muted)]">Press Enter to send</span>
+              <button
+                onClick={sendGrok}
+                disabled={grokLoading || !grokInput.trim()}
+                className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                  grokLoading || !grokInput.trim()
+                    ? "bg-[var(--panel-2)] text-[var(--muted)] cursor-not-allowed"
+                    : "bg-cyan-500/20 text-cyan-200 hover:bg-cyan-500/30"
+                }`}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cell Detail Popup ── */}
+      {popupCell && (() => {
+        const { strike, expiry, x, y } = popupCell;
+        const val = grid[String(strike)]?.[expiry] ?? 0;
+        const detail = data.cellDetails?.[String(strike)]?.[expiry];
+        // Position popup — keep it within viewport
+        const popW = 280;
+        const popH = 260;
+        const left = Math.min(x - popW / 2, window.innerWidth - popW - 12);
+        const top = y - popH - 8 > 0 ? y - popH - 8 : y + 36;
+        return (
+          <div
+            className="gex-popup fixed z-50 rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/40"
+            style={{
+              left: Math.max(8, left),
+              top,
+              width: popW,
+            }}
+          >
+            {/* Header */}
+                  <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-[var(--foreground)]">${strike}</span>
+                <span className="text-[10px] text-[var(--muted)]">{fmtExpiry(expiry)}</span>
+              </div>
+              <button
+                onClick={() => setPopupCell(null)}
+                className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            {/* GEX value */}
+            <div className="px-4 py-2 border-b border-[var(--border)]/50">
+              <p className="text-[10px] uppercase tracking-wider text-[var(--muted)]">Net {metricLabel}</p>
+              <p className={`text-lg font-bold ${val > 0 ? "text-cyan-400" : val < 0 ? "text-purple-400" : "text-[var(--muted)]"}`}>
+                {val !== 0 ? fmt(val) : "—"}
+              </p>
+            </div>
+            {/* Detail grid */}
+            {detail ? (
+              <div className="grid grid-cols-3 gap-px bg-[var(--border)]/20 text-[10px]">
+                <div className="bg-[var(--panel)] px-3 py-2" />
+                <div className="bg-[var(--panel)] px-3 py-2 text-center font-semibold text-cyan-400">Calls</div>
+                <div className="bg-[var(--panel)] px-3 py-2 text-center font-semibold text-purple-400">Puts</div>
+
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-[var(--muted)]">OI</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.callOI.toLocaleString()}</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.putOI.toLocaleString()}</div>
+
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-[var(--muted)]">Gamma</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.callGamma.toFixed(4)}</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.putGamma.toFixed(4)}</div>
+
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-[var(--muted)]">Delta</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.callDelta.toFixed(3)}</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.putDelta.toFixed(3)}</div>
+
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-[var(--muted)]">IV</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.callIV.toFixed(1)}%</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.putIV.toFixed(1)}%</div>
+
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-[var(--muted)]">Volume</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.callVolume.toLocaleString()}</div>
+                <div className="bg-[var(--panel)] px-3 py-1.5 text-center tabular-nums text-[var(--foreground)]">{detail.putVolume.toLocaleString()}</div>
+              </div>
+            ) : (
+              <div className="px-4 py-4 text-center text-[10px] text-[var(--muted)]">
+                Detail data not available
+              </div>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+/* ================================================================
+   MARKET HEATMAP VIEW
    ================================================================ */
 function HeatmapView({ flows }: { flows: typeof mockFlowOrders }) {
   // Group by ticker → show a grid of OI × direction heat cells
@@ -1087,7 +2054,7 @@ function ThemeToggleButton({
     <button
       type="button"
       onClick={onToggle}
-      className="fixed right-[396px] top-6 z-40 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)]/95 text-[var(--muted)] shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur hover:text-[var(--foreground)]"
+      className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)]/95 text-[var(--muted)] shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur hover:text-[var(--foreground)]"
       title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
       aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
     >
@@ -1110,7 +2077,7 @@ function AlertsToggleButton({ isOpen, onToggle }: { isOpen: boolean; onToggle: (
     <button
       type="button"
       onClick={onToggle}
-      className="fixed right-[448px] top-6 z-40 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)]/95 text-[var(--muted)] shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur hover:text-[var(--foreground)]"
+      className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)]/95 text-[var(--muted)] shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur hover:text-[var(--foreground)]"
       title={isOpen ? "Hide alerts" : "Show alerts"}
       aria-label={isOpen ? "Hide alerts" : "Show alerts"}
     >
@@ -1284,6 +2251,7 @@ function OptionChainView() {
               <th className="px-3 py-2 text-right font-medium text-[var(--accent)]/70">OI</th>
               {/* Strike */}
               <th className="px-4 py-2 text-center font-bold text-[var(--foreground)]">STRIKE</th>
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)]/95 text-[var(--muted)] shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur hover:text-[var(--foreground)]"
               {/* Put side */}
               <th className="px-3 py-2 text-right font-medium text-[var(--danger)]/70">BID</th>
               <th className="px-3 py-2 text-right font-medium text-[var(--danger)]/70">ASK</th>
