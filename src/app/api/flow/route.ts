@@ -113,10 +113,6 @@ export async function GET(req: NextRequest) {
 
         const isCall = details.contract_type === "call";
 
-        // Premium = last price × 100 shares per contract
-        const premiumPer = lastPrice * 100;
-        const premiumStr = formatDollars(premiumPer);
-
         // DTE
         const changePct = dayData.change_percent ?? 0;
         const expDate = new Date(details.expiration_date);
@@ -158,16 +154,47 @@ export async function GET(req: NextRequest) {
           direction = isCall ? "BULLISH" : "BEARISH";
         }
 
-        // Consolidation type based on OI
-        const consolidation =
-          oi > 30000 ? "SWEEP" : oi > 5000 ? "BLOCK" : "SPLIT";
+        // Volume from snapshot day data
+        const dayVolume = dayData.volume ?? 0;
 
-        // Type heuristic
-        const type = oi > 10000 ? "AUTO" : "AUCT";
+        // Volume/OI ratio — high ratio = aggressive new activity
+        const volOiRatio = oi > 0 ? dayVolume / oi : 0;
 
-        // Use a reasonable size (we take a fraction of OI as a proxy for
-        // daily activity since the snapshot doesn't include trade volume)
-        const estimatedSize = Math.max(1, Math.round(oi * (Math.abs(changePct) / 100 + 0.01)));
+        // Premium per contract
+        const premiumVal = lastPrice * 100;
+
+        // Estimated total premium moved today = price × volume × 100
+        const totalPremiumMoved = lastPrice * dayVolume * 100;
+
+        // ── Consolidation (SWEEP / BLOCK / SPLIT) ──
+        // SWEEP: aggressive fills — high vol/OI ratio + large premium + hit the ASK
+        //   OR very high volume with big premium regardless of side
+        // BLOCK: large single-print style — big premium but lower urgency
+        // SPLIT: smaller or fragmented orders
+        let consolidation: string;
+        if (
+          dayVolume > 0 &&
+          ((volOiRatio >= 0.3 && side === "ASK" && totalPremiumMoved >= 25_000) ||
+           (volOiRatio >= 0.5 && totalPremiumMoved >= 50_000) ||
+           (dayVolume >= 1000 && totalPremiumMoved >= 100_000))
+        ) {
+          consolidation = "SWEEP";
+        } else if (
+          (totalPremiumMoved >= 25_000 && dayVolume >= 100) ||
+          (dayVolume >= 500 && oi >= 5000)
+        ) {
+          consolidation = "BLOCK";
+        } else {
+          consolidation = "SPLIT";
+        }
+
+        // Type heuristic — aggressive (AUTO) vs auction (AUCT)
+        const type = side === "ASK" && volOiRatio > 0.2 ? "AUTO" : "AUCT";
+
+        // Use day volume if available, otherwise estimate from OI
+        const estimatedSize = dayVolume > 0
+          ? dayVolume
+          : Math.max(1, Math.round(oi * (Math.abs(changePct) / 100 + 0.01)));
 
         // Timestamp from last update
         const ts = dayData.last_updated
@@ -184,11 +211,11 @@ export async function GET(req: NextRequest) {
           reference: round2(reference),
           size: Math.min(estimatedSize, 99999),
           price: round2(lastPrice),
-          premium: premiumStr,
+          premium: formatDollars(totalPremiumMoved > 0 ? totalPremiumMoved : premiumVal),
           direction,
           type,
           consolidation,
-          volume: formatNumber(estimatedSize),
+          volume: formatNumber(dayVolume > 0 ? dayVolume : estimatedSize),
           oi: formatNumber(oi),
           side,
           dte: `${dte}d`,
