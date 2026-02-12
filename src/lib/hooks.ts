@@ -43,6 +43,8 @@ function mergeFlowRows(incoming: FlowOrder[], existing: FlowOrder[]) {
 export function useFlowData(tickers?: string) {
   const [orders, setOrders] = useState<FlowOrder[]>([]);
   const [spotPrices, setSpotPrices] = useState<Record<string, number>>({});
+  // useSpotPrices hook will poll aggregated spot prices for the requested tickers
+  const { spotPrices: polSpotPrices } = useSpotPrices(tickers);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<string>("");
@@ -64,6 +66,8 @@ export function useFlowData(tickers?: string) {
         setOrders((prev) => mergeFlowRows(nextRows, prev));
       }
       setSpotPrices(data.spotPrices ?? {});
+      // merge with polygon aggregated spot prices for broader coverage
+      setSpotPrices((prev) => ({ ...(prev || {}), ...(data.spotPrices ?? {}), ...(polSpotPrices ?? {}) }));
       setLastUpdate(
         new Date().toLocaleTimeString("en-US", {
           hour: "2-digit",
@@ -89,6 +93,39 @@ export function useFlowData(tickers?: string) {
   }, [fetchFlow]);
 
   return { orders, spotPrices, loading, error, lastUpdate, refetch: fetchFlow };
+}
+
+// Poll aggregated spot prices for a set of tickers (or default list)
+export function useSpotPrices(tickers?: string) {
+  const [spotPrices, setSpotPrices] = useState<Record<string, number>>({});
+  const [lastUpdate, setLastUpdate] = useState<string>("");
+  const ref = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchPrices = async () => {
+      try {
+        const qs = tickers && tickers.trim() ? `?tickers=${encodeURIComponent(tickers)}` : "";
+        const res = await fetch(`/api/spot-prices${qs}`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!mounted) return;
+        setSpotPrices(json.spotPrices ?? {});
+        setLastUpdate(json.timestamp ?? new Date().toISOString());
+      } catch {
+        // ignore
+      }
+    };
+
+    fetchPrices();
+    ref.current = setInterval(fetchPrices, 2000);
+    return () => {
+      mounted = false;
+      if (ref.current) clearInterval(ref.current);
+    };
+  }, [tickers]);
+
+  return { spotPrices, lastUpdate };
 }
 
 /* ──────────────────────────────────

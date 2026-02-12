@@ -4,6 +4,8 @@ const API_KEY = process.env.MASSIVE_API_KEY ?? "";
 const BASE = "https://api.polygon.io";
 import fs from "fs";
 import path from "path";
+// Merge in tickers from mock data so `/api/stock-search?all=1` covers heatmap tickers
+import { mockFlowOrders } from "../../../lib/mock-data";
 
 async function readLocalTickers(): Promise<Array<{ ticker: string; name: string; market: string; locale: string; primaryExchange: string }>> {
   try {
@@ -36,6 +38,21 @@ async function readLocalTickers(): Promise<Array<{ ticker: string; name: string;
       // default to ticker if no name found
       if (!tickers.has(t)) tickers.set(t, t);
     }
+    // Also include tickers that appear in mockFlowOrders (used in heatmap/flow pages)
+    try {
+      for (const r of mockFlowOrders) {
+        if (r && r.ticker) {
+          tickers.set(String(r.ticker).toUpperCase(), r.ticker || String(r.ticker).toUpperCase());
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // Ensure a small default set is available as well
+    const DEFAULT_ADD = ["NVDA", "AAPL", "TSLA", "SPY", "META", "AMD", "SMCI", "MSFT", "AMZN", "GOOGL"];
+    for (const t of DEFAULT_ADD) tickers.set(t, t);
+
     return Array.from(tickers.entries()).slice(0, 2000).map(([ticker, name]) => ({ ticker, name, market: "", locale: "", primaryExchange: "" }));
   } catch (err) {
     return [];

@@ -957,8 +957,9 @@ function GexHeatmapView() {
   const priceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const atmRowRef = useRef<HTMLTableRowElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
-  const tickerSearchRef = useRef<HTMLDivElement>(null);
+  const tickerSearchRef = useRef<HTMLFormElement>(null);
   const tickerSearchCacheRef = useRef<Record<string, HeatmapStockSearchResult[]>>({});
+  const localTickersRef = useRef<HeatmapStockSearchResult[] | null>(null);
 
   const selectTickerSearchResult = (item: HeatmapStockSearchResult) => {
     const next = item.ticker.toUpperCase();
@@ -1060,7 +1061,7 @@ function GexHeatmapView() {
       }
     };
 
-    // compute interval: faster during market hours
+    // compute interval: faster during market hours (near-real-time)
     const getInterval = () => {
       const now = new Date();
       const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
@@ -1068,7 +1069,7 @@ function GexHeatmapView() {
       const m = et.getMinutes();
       const mins = h * 60 + m;
       const isMarketHours = mins >= 570 && mins <= 960; // 9:30 - 16:00 ET
-      return isMarketHours ? 5000 : 15000;
+      return isMarketHours ? 2000 : 5000; // 2s during market hours, 5s otherwise
     };
 
     // initial fetch
@@ -1205,6 +1206,7 @@ function GexHeatmapView() {
           if (cancelled) return;
           setTickerSearchResults(Array.isArray(json.results) ? json.results : []);
           setTickerSearchActiveIndex(-1);
+          setTickerSearchOpen(true);
         } catch (err) {
           if ((err as Error).name === 'AbortError') return;
           setTickerSearchResults([]);
@@ -1219,6 +1221,17 @@ function GexHeatmapView() {
       };
     }
 
+    // Fast local filtering: if we have a local list, show immediate matches
+    if (localTickersRef.current && query.length > 0) {
+      const q = key;
+      const quick = localTickersRef.current.filter((item) => item.ticker.toUpperCase().includes(q) || item.name.toUpperCase().includes(q)).slice(0, 12);
+      if (quick.length > 0) {
+        setTickerSearchResults(quick);
+        setTickerSearchActiveIndex(-1);
+        setTickerSearchOpen(true);
+        // allow network fetch to update results afterwards
+      }
+    }
     const cachedExact = tickerSearchCacheRef.current[query];
     if (cachedExact) {
       setTickerSearchResults(cachedExact);
@@ -1237,6 +1250,7 @@ function GexHeatmapView() {
           .slice(0, 12)
       );
       setTickerSearchActiveIndex(-1);
+      setTickerSearchOpen(true);
     }
 
     const controller = new AbortController();
@@ -1255,10 +1269,19 @@ function GexHeatmapView() {
         const results = Array.isArray(json.results)
           ? (json.results as HeatmapStockSearchResult[])
           : [];
+        // If we received server results, update local cache root if it's a superset
+        if (results.length > 0 && (!localTickersRef.current || localTickersRef.current.length < results.length)) {
+          // merge but keep uniqueness by ticker
+          const map = new Map<string, HeatmapStockSearchResult>();
+          (localTickersRef.current || []).forEach((r) => map.set(r.ticker, r));
+          results.forEach((r) => map.set(r.ticker, r));
+          localTickersRef.current = Array.from(map.values());
+        }
         // cache under uppercase key
         tickerSearchCacheRef.current[key] = results;
         setTickerSearchResults(results);
         setTickerSearchActiveIndex(-1);
+        setTickerSearchOpen(true);
 
         // Prefetch company names for the top few results when missing
         (async () => {
@@ -1297,6 +1320,27 @@ function GexHeatmapView() {
       controller.abort();
     };
   }, [tickerInput]);
+
+  // Load local tickers once on mount for immediate client-side filtering
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/stock-search?all=1`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const results = Array.isArray(json.results) ? json.results as HeatmapStockSearchResult[] : [];
+        if (!cancelled) {
+          localTickersRef.current = results;
+          // prime cache for empty query
+          tickerSearchCacheRef.current[""] = results;
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
@@ -1543,7 +1587,7 @@ function GexHeatmapView() {
           </button>
         </form>
         <span className="text-sm font-semibold">{data.ticker}</span>
-        <span className="text-sm text-[var(--muted)]">${(currentPrice ?? spotPrice).toFixed(2)}</span>
+        <span className="text-sm text-[var(--muted)]">${spotPrice.toFixed(2)}</span>
 
         {/* ── Replay toggle ── */}
         <button
@@ -4090,7 +4134,7 @@ function OptionChainView() {
           </button>
         </form>
         <span className="text-sm font-semibold">{ticker}</span>
-        <span className="text-sm text-[var(--muted)]">${(currentPrice ?? spotPrice).toFixed(2)}</span>
+        <span className="text-sm text-[var(--muted)]">${spotPrice.toFixed(2)}</span>
       </div>
 
       {/* Expiry date tabs */}

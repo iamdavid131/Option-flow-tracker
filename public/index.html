@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Option Flow - Heatmap & Journal</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Option Flow — Heatmap & Trading Journal</h1>
+    </header>
+
+    <main>
+      <section id="heatmap-section">
+        <h2>Heatmap</h2>
+        <div id="heatmap" class="grid"></div>
+      </section>
+
+      <section id="journal-section">
+        <h2>Trading Journal</h2>
+        <form id="journal-form">
+          <input id="entry-title" placeholder="Title" required />
+          <input id="entry-note" placeholder="Notes" />
+          <button type="submit">Add</button>
+        </form>
+        <ul id="journal-list"></ul>
+      </section>
+    </main>
+
+    <script src="/2na-heatmap-color-logic.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
