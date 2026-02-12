@@ -269,7 +269,7 @@ export async function GET(req: NextRequest) {
 
     // If no trade/quote flow, synthesize from option bars
     if (flowSeries.length === 0 && optionSeries.length > 0) {
-      flowSeries = optionSeries.map((p) => {
+      flowSeries = optionSeries.map((p: { t: number; o: number; h: number; l: number; c: number; v: number }) => {
         const isUp = p.c >= p.o;
         const vol = p.v ?? 0;
         const askVol = isUp ? vol * 0.7 : vol * 0.2;

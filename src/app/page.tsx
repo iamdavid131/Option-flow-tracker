@@ -3,9 +3,28 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { mockFlowOrders, mockDarkPoolTrades } from "@/lib/mock-data";
 import { useFlowData, useDarkPoolData } from "@/lib/hooks";
+
+const WorldMapView = dynamic(() => import("@/components/WorldMapView"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
+      Loading world map…
+    </div>
+  ),
+});
+
+const TradingJournalDashboard = dynamic(() => import("@/components/TradingJournalDashboard"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
+      Loading trading journal…
+    </div>
+  ),
+});
 
 const FILTER_CHIPS = [
   "All",
@@ -39,6 +58,36 @@ const NAV_ITEMS = [
     ),
   },
   {
+    id: "journal" as const,
+    label: "Trading Journal",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3.75h10.5A2.25 2.25 0 0119.5 6v12a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 18V6a2.25 2.25 0 012.25-2.25z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 8.25h7.5M8.25 12h7.5M8.25 15.75h4.5" />
+      </svg>
+    ),
+  },
+  {
+    id: "news" as const,
+    label: "News",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6 3h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8M8 11h8M8 15h5" />
+      </svg>
+    ),
+  },
+  {
+    id: "worldmap" as const,
+    label: "World Map",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M20.893 13.393l-1.135-1.135a2.252 2.252 0 01-.421-.585l-1.08-2.16a.414.414 0 00-.663-.107.827.827 0 01-.812.21l-1.273-.363a.89.89 0 00-.738.145l-.91.674a.926.926 0 01-1.036.043l-.246-.147a.926.926 0 00-1.229.303l-.457.762a1.155 1.155 0 01-1.258.504l-.091-.023a1.146 1.146 0 00-1.069.29l-.727.691" />
+        <circle cx="12" cy="12" r="9" />
+      </svg>
+    ),
+  },
+  {
     id: "darkpool" as const,
     label: "Dark Pool",
     icon: (
@@ -58,9 +107,18 @@ const NAV_ITEMS = [
   },
 ];
 
+const TOOL_TABS = [
+  { id: "calculator", label: "Options Profit Calculator" },
+] as const;
+const SHOW_TOOL_TABS = false;
+
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"flow" | "heatmap" | "darkpool" | "tools">("flow");
+  const [activeTab, setActiveTab] = useState<"flow" | "heatmap" | "journal" | "news" | "worldmap" | "darkpool" | "tools">("flow");
   const [dpSubTab, setDpSubTab] = useState<"darkpool" | "chain">("darkpool");
+  const [toolsSubTab, setToolsSubTab] = useState<(typeof TOOL_TABS)[number]["id"]>("calculator");
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [toolsSectionOpen, setToolsSectionOpen] = useState(true);
   const [search, setSearch] = useState("");
   const [activeChip, setActiveChip] = useState("All");
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -239,37 +297,133 @@ export default function Home() {
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(94,225,181,0.08),transparent)]" />
 
       {/* ── Sidebar ── */}
-      <aside className="sticky top-0 z-30 flex h-screen w-[60px] flex-col items-center border-r border-[var(--border)] bg-[var(--panel)] py-5 gap-1">
-        {NAV_ITEMS.map((item) => {
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              title={item.label}
-              className={`group relative flex h-11 w-11 items-center justify-center rounded-xl transition-all ${
-                isActive
-                  ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                  : "text-[var(--muted)] hover:bg-white/5 hover:text-[var(--foreground)]"
-              }`}
-            >
-              {item.icon}
-              {isActive && (
-                <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--accent)]" />
-              )}
-              {/* Tooltip */}
-              <span className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-lg bg-[var(--panel-2)] border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--foreground)] opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
-                {item.label}
-              </span>
-            </button>
-          );
-        })}
+      <aside
+        className={`sticky top-0 z-30 flex h-screen flex-col border-r border-[var(--border)] bg-[var(--panel)] py-5 transition-all ${
+          sidebarExpanded ? "w-[220px] px-4" : "w-[60px] items-center"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setSidebarExpanded((v) => !v)}
+          className={`mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--foreground)] ${
+            sidebarExpanded ? "self-start" : "self-center"
+          }`}
+          aria-label="Toggle sidebar"
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+          </svg>
+        </button>
+
+        <div className={`flex flex-col gap-1 ${sidebarExpanded ? "items-stretch" : "items-center"}`}>
+          {!sidebarExpanded &&
+            NAV_ITEMS.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  title={item.label}
+                  className={`group relative flex h-11 w-11 items-center justify-center rounded-xl transition-all ${
+                    isActive
+                      ? "bg-[var(--accent)]/15 text-[var(--accent)]"
+                      : "text-[var(--muted)] hover:bg-white/5 hover:text-[var(--foreground)]"
+                  }`}
+                >
+                  {item.icon}
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--accent)]" />
+                  )}
+                  <span className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-lg bg-[var(--panel-2)] border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--foreground)] opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+
+          {sidebarExpanded && (
+            <div className="space-y-3">
+              {NAV_ITEMS.filter((item) => item.id !== "tools").map((item) => {
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`group relative flex h-11 items-center gap-3 rounded-xl px-3 transition-all ${
+                      isActive
+                        ? "bg-[var(--accent)]/15 text-[var(--accent)]"
+                        : "text-[var(--muted)] hover:bg-white/5 hover:text-[var(--foreground)]"
+                    }`}
+                  >
+                    {item.icon}
+                    <span className="text-sm font-medium">{item.label}</span>
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--accent)]" />
+                    )}
+                  </button>
+                );
+              })}
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("tools");
+                    setToolsSectionOpen((v) => !v);
+                  }}
+                  className={`flex h-11 w-full items-center justify-between rounded-xl px-3 transition-all ${
+                    activeTab === "tools"
+                      ? "bg-[var(--accent)]/15 text-[var(--accent)]"
+                      : "text-[var(--muted)] hover:bg-white/5 hover:text-[var(--foreground)]"
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    {NAV_ITEMS.find((item) => item.id === "tools")?.icon}
+                    <span className="text-sm font-medium">Tools</span>
+                  </span>
+                  <svg
+                    viewBox="0 0 24 24"
+                    className={`h-4 w-4 transition-transform ${toolsSectionOpen ? "rotate-180" : "rotate-0"}`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+                {toolsSectionOpen && SHOW_TOOL_TABS && (
+                  <div className="mt-2 space-y-1 pl-12">
+                    {TOOL_TABS.map((tab) => {
+                      const isActive = activeTab === "tools" && toolsSubTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={() => {
+                            setActiveTab("tools");
+                            setToolsSubTab(tab.id);
+                          }}
+                          className={`flex w-full items-center rounded-lg px-3 py-2 text-xs transition-all ${
+                            isActive
+                              ? "bg-[var(--panel-2)] text-[var(--foreground)]"
+                              : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </aside>
 
       {/* ── Main content ── */}
-      <div className={`relative flex-1 mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8 ${activeTab === "heatmap" ? "py-2" : "py-6"}`}>
+      <div className={`relative flex-1 mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8 ${activeTab === "heatmap" || activeTab === "worldmap" ? "py-2" : "py-6"}`}>
         {/* ── Header ── */}
-        {activeTab !== "heatmap" && (
+        {activeTab !== "heatmap" && activeTab !== "worldmap" && activeTab !== "journal" && (
         <header className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--panel)] text-sm font-bold text-[var(--accent)] ring-1 ring-[var(--border)]">
@@ -326,7 +480,7 @@ export default function Home() {
         )}
 
         {/* ── Stats Bar + Sentiment Bar ── */}
-        {activeTab !== "heatmap" && (
+        {activeTab === "flow" && (
         <>
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {(() => {
@@ -403,12 +557,20 @@ export default function Home() {
         )}
 
         {/* ── Filters ── */}
-        {activeTab !== "heatmap" && (
+        {activeTab !== "heatmap" && activeTab !== "worldmap" && activeTab !== "journal" && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
           {/* Page title + dark pool sub-tabs */}
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold">
-              {activeTab === "flow" ? "Order Flow" : activeTab === "heatmap" ? "Heatmap" : activeTab === "tools" ? "Tools" : dpSubTab === "darkpool" ? "Dark Pool" : "Option Chain"}
+              {activeTab === "flow"
+                ? "Order Flow"
+                : activeTab === "tools"
+                ? "Tools"
+                : activeTab === "news"
+                ? "News"
+                : dpSubTab === "darkpool"
+                ? "Dark Pool"
+                : "Option Chain"}
             </h2>
             {activeTab === "darkpool" && (
               <div className="flex items-center gap-1 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-1">
@@ -432,6 +594,23 @@ export default function Home() {
                 >
                   Option Chain
                 </button>
+              </div>
+            )}
+            {activeTab === "tools" && SHOW_TOOL_TABS && (
+              <div className="flex flex-wrap items-center gap-1 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-1">
+                {TOOL_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setToolsSubTab(tab.id)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                      toolsSubTab === tab.id
+                        ? "bg-[var(--accent)] text-[#0c0f12] shadow-lg shadow-[var(--accent)]/20"
+                        : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -467,7 +646,7 @@ export default function Home() {
         )}
 
         {/* ── Content ── */}
-        <div className={`overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] ${activeTab === "heatmap" ? "mt-0" : "mt-4"}`}>
+        <div className={`overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] ${activeTab === "heatmap" || activeTab === "worldmap" || activeTab === "journal" ? "mt-0" : "mt-4"} ${activeTab === "worldmap" ? "h-[calc(100vh-80px)]" : ""}`}>
           {(activeTab === "flow" && flowLoading) ||
           (activeTab === "darkpool" && dpLoading) ? (
             <div className="flex items-center justify-center py-20 text-[var(--muted)]">
@@ -496,8 +675,14 @@ export default function Home() {
             <FlowTable rows={filteredFlows} />
           ) : activeTab === "heatmap" ? (
             <GexHeatmapView />
+          ) : activeTab === "journal" ? (
+            <TradingJournalDashboard />
+          ) : activeTab === "news" ? (
+            <NewsView />
+          ) : activeTab === "worldmap" ? (
+            <WorldMapView />
           ) : activeTab === "tools" ? (
-            <HeatmapView flows={flowSource} />
+            <ToolsView flows={flowSource} />
           ) : dpSubTab === "chain" ? (
             <OptionChainView />
           ) : (
@@ -755,7 +940,7 @@ function GexHeatmapView() {
     setGrokLoading(true);
     setGrokError(null);
 
-    const nextMessages = [...grokMessages, { role: "user", content: text }];
+    const nextMessages: { role: "user" | "assistant"; content: string }[] = [...grokMessages, { role: "user" as const, content: text }];
     setGrokMessages(nextMessages);
     setGrokInput("");
 
@@ -1519,6 +1704,1236 @@ function HeatmapView({ flows }: { flows: typeof mockFlowOrders }) {
       {grouped.length === 0 && (
         <p className="py-12 text-center text-[var(--muted)]">No data available for heatmap.</p>
       )}
+    </div>
+  );
+}
+
+/* ================================================================
+   TOOLS VIEW
+   ================================================================ */
+function ToolsView({ flows }: { flows: typeof mockFlowOrders }) {
+  return <OptionsCalculatorView flows={flows} />;
+}
+
+type NewsItem = {
+  title: string;
+  link: string;
+  pubDate?: string;
+};
+
+const NEWS_FEEDS = [
+  {
+    id: "cnbc-markets",
+    name: "CNBC Markets",
+    url: "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+  },
+  {
+    id: "marketwatch",
+    name: "MarketWatch",
+    url: "https://feeds.marketwatch.com/marketwatch/topstories/",
+  },
+  {
+    id: "yahoo-finance",
+    name: "Yahoo Finance",
+    url: "https://finance.yahoo.com/news/rssindex",
+  },
+  {
+    id: "sec-press",
+    name: "SEC Press Releases",
+    url: "https://www.sec.gov/rss/news/press.xml",
+  },
+];
+
+function NewsView() {
+  const [activeFeed, setActiveFeed] = useState(NEWS_FEEDS[0]?.id ?? "");
+  const [items, setItems] = useState<NewsItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const feed = NEWS_FEEDS.find((f) => f.id === activeFeed) ?? NEWS_FEEDS[0];
+
+  useEffect(() => {
+    if (!feed) return;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/rss?url=${encodeURIComponent(feed.url)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setItems(Array.isArray(data.items) ? data.items : []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load feed");
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [feed]);
+
+  return (
+    <div className="tv-calc p-6 space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">News</p>
+          <h3 className="text-2xl font-semibold">Market Headlines</h3>
+          <p className="mt-2 text-sm text-[var(--muted)]">Curated RSS feeds with quick links to sources.</p>
+        </div>
+      </div>
+
+      <div className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {NEWS_FEEDS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveFeed(tab.id)}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+                tab.id === activeFeed
+                  ? "bg-[var(--accent)] text-[#0c0f12] shadow-lg shadow-[var(--accent)]/20"
+                  : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              {tab.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+        <div className="border-b border-[var(--border)] px-4 py-3">
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
+            {feed?.name ?? "Feed"}
+          </p>
+        </div>
+        <div className="max-h-[75vh] overflow-y-auto divide-y divide-[var(--border)]">
+          {loading && (
+            <div className="px-4 py-8 text-center text-[var(--muted)]">Loading feed…</div>
+          )}
+          {!loading && error && (
+            <div className="px-4 py-8 text-center text-[var(--danger)]">{error}</div>
+          )}
+          {!loading && !error && items.length === 0 && (
+            <div className="px-4 py-8 text-center text-[var(--muted)]">No headlines available.</div>
+          )}
+          {!loading && !error && items.map((item) => (
+            <a
+              key={`${item.link}-${item.title}`}
+              href={item.link}
+              target="_blank"
+              rel="noreferrer"
+              className="block px-4 py-4 transition-colors hover:bg-white/[0.03]"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-[var(--foreground)]">{item.title}</p>
+                {item.pubDate && (
+                  <span className="text-[10px] text-[var(--muted)]">
+                    {new Date(item.pubDate).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-[var(--muted)]">{item.link}</p>
+            </a>
+          ))}
+        </div>
+      </div>
+
+      <p className="text-[11px] text-[var(--muted)]">
+        Feeds are provided by their respective publishers. Review each source’s terms if you plan to republish content.
+      </p>
+    </div>
+  );
+}
+
+function TapeToolView({ flows }: { flows: typeof mockFlowOrders }) {
+  const [tickerFilter, setTickerFilter] = useState("");
+  const [focusFilter, setFocusFilter] = useState<"All" | "Sweeps" | "Blocks" | "Calls" | "Puts">("All");
+
+  const parseCompact = (value: string) => {
+    const v = value.replace(/[$,]/g, "");
+    const num = parseFloat(v.replace(/[KM]/g, ""));
+    const mult = v.includes("M") ? 1_000_000 : v.includes("K") ? 1_000 : 1;
+    return isNaN(num) ? 0 : num * mult;
+  };
+
+  const filtered = useMemo(() => {
+    const term = tickerFilter.trim().toUpperCase();
+    return flows.filter((row) => {
+      if (term && row.ticker !== term) return false;
+      if (focusFilter === "Sweeps" && row.consolidation !== "SWEEP") return false;
+      if (focusFilter === "Blocks" && row.consolidation !== "BLOCK") return false;
+      if (focusFilter === "Calls" && row.contractType !== "call") return false;
+      if (focusFilter === "Puts" && row.contractType !== "put") return false;
+      return true;
+    });
+  }, [flows, focusFilter, tickerFilter]);
+
+  const stats = useMemo(() => {
+    const totalPremium = filtered.reduce((sum, row) => sum + parseCompact(row.premium), 0);
+    const calls = filtered.filter((r) => r.contractType === "call").length;
+    const puts = filtered.filter((r) => r.contractType === "put").length;
+    const bullish = filtered.filter((r) => r.direction === "BULLISH").length;
+    const sweeps = filtered.filter((r) => r.consolidation === "SWEEP").length;
+    const blocks = filtered.filter((r) => r.consolidation === "BLOCK").length;
+    const bullPct = filtered.length > 0 ? Math.round((bullish / filtered.length) * 100) : 50;
+    return { totalPremium, calls, puts, bullPct, sweeps, blocks };
+  }, [filtered]);
+
+  const formatMoney = (n: number) =>
+    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `$${(n / 1_000).toFixed(1)}K` : `$${n.toFixed(0)}`;
+
+  const topRows = filtered.slice(0, 12);
+
+  return (
+    <div className="tv-calc p-6 space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Options Flow Tool</p>
+          <h3 className="text-2xl font-semibold">Tape</h3>
+          <p className="mt-1 text-xs text-[var(--muted)]">Real-time order flow with sweeps and blocks focus.</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
+          <span className="h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse" />
+          <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Live Tape</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {[
+          { label: "Total Premium", value: formatMoney(stats.totalPremium), color: "text-[var(--accent)]" },
+          { label: "Bullish", value: `${stats.bullPct}%`, color: "text-[var(--accent)]" },
+          { label: "Calls", value: stats.calls.toLocaleString(), color: "text-[var(--accent)]" },
+          { label: "Puts", value: stats.puts.toLocaleString(), color: "text-[var(--danger)]" },
+          { label: "Sweeps", value: stats.sweeps.toLocaleString(), color: "text-[var(--accent-2)]" },
+          { label: "Blocks", value: stats.blocks.toLocaleString(), color: "text-[var(--warning)]" },
+        ].map((item) => (
+          <div key={item.label} className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">{item.label}</p>
+            <p className={`mt-1 text-base font-semibold ${item.color}`}>{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          value={tickerFilter}
+          onChange={(e) => setTickerFilter(e.target.value.toUpperCase())}
+          placeholder="Ticker"
+          className="w-28 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          {["All", "Sweeps", "Blocks", "Calls", "Puts"].map((chip) => (
+            <button
+              key={chip}
+              onClick={() => setFocusFilter(chip as typeof focusFilter)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
+                focusFilter === chip
+                  ? "border-[var(--accent)]/50 bg-[var(--accent)]/10 text-[var(--accent)]"
+                  : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+        <table className="w-full min-w-[900px] text-left text-[12px]">
+          <thead>
+            <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+              <th className="px-4 py-3 font-medium">Time</th>
+              <th className="px-4 py-3 font-medium">Ticker</th>
+              <th className="px-4 py-3 font-medium">Contract</th>
+              <th className="px-4 py-3 font-medium">Side</th>
+              <th className="px-4 py-3 font-medium">Size</th>
+              <th className="px-4 py-3 font-medium">Premium</th>
+              <th className="px-4 py-3 font-medium">Direction</th>
+              <th className="px-4 py-3 font-medium">Tag</th>
+            </tr>
+          </thead>
+          <tbody>
+            {topRows.map((row, i) => (
+              <tr
+                key={`${row.ticker}-${row.time}-${i}`}
+                className="border-b border-[var(--border)] transition-colors hover:bg-white/[0.02]"
+              >
+                <td className="px-4 py-3 text-[var(--muted)]">{row.time}</td>
+                <td className="px-4 py-3 font-semibold text-[var(--accent-2)]">{row.ticker}</td>
+                <td className="px-4 py-3">
+                  <span className="font-medium">{row.strike}</span>
+                  <span className={`ml-1.5 ${row.contractType === "call" ? "text-[var(--accent)]" : "text-[var(--danger)]"}`}>
+                    {row.contractType}
+                  </span>
+                  <span className="ml-1.5 text-[var(--muted)]">{row.expiry}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`font-semibold ${row.side === "ASK" ? "text-[var(--danger)]" : row.side === "BID" ? "text-[var(--accent)]" : "text-[var(--accent-2)]"}`}>
+                    {row.side}
+                  </span>
+                </td>
+                <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{row.size}</td>
+                <td className="px-4 py-3 font-semibold text-[var(--accent)]">{row.premium}</td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                    row.direction === "BULLISH"
+                      ? "bg-emerald-500/15 text-[var(--accent)]"
+                      : row.direction === "BEARISH"
+                      ? "bg-red-500/15 text-[var(--danger)]"
+                      : "bg-gray-500/15 text-[var(--muted)]"
+                  }`}>
+                    {row.direction}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                    row.consolidation === "SWEEP"
+                      ? "bg-blue-500/15 text-[var(--accent-2)]"
+                      : row.consolidation === "BLOCK"
+                      ? "bg-amber-500/15 text-[var(--warning)]"
+                      : "bg-gray-500/15 text-[var(--muted)]"
+                  }`}>
+                    {row.consolidation}
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {topRows.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-12 text-center text-[var(--muted)]">
+                  No tape prints match the filter.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function VolatilityDashboardView() {
+  const term = [18, 19, 20, 22, 23, 21, 19];
+  const skew = [11, 13, 15, 14, 12, 10, 9];
+
+  const spark = (values: number[]) => {
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const range = Math.max(1, max - min);
+    return values
+      .map((v, i) => {
+        const x = (i / (values.length - 1)) * 100;
+        const y = 100 - ((v - min) / range) * 100;
+        return `${x},${y}`;
+      })
+      .join(" ");
+  };
+
+  return (
+    <div className="tv-calc p-6 space-y-6">
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Assess Volatility</p>
+          <h3 className="text-2xl font-semibold">Volatility Dashboard</h3>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            A full view of implied volatility, skew, and term structure with quick sentiment cues.
+          </p>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            {[
+              { label: "1D IV", value: "18.4%", color: "text-[var(--accent)]" },
+              { label: "30D IV", value: "21.7%", color: "text-[var(--accent-2)]" },
+              { label: "Skew", value: "-4.2", color: "text-[var(--danger)]" },
+              { label: "Vol Rank", value: "56", color: "text-[var(--warning)]" },
+            ].map((card) => (
+              <div key={card.label} className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">{card.label}</p>
+                <p className={`mt-1 text-lg font-semibold ${card.color}`}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Term Structure</p>
+          <div className="mt-4 h-40 rounded-xl bg-gradient-to-br from-cyan-500/15 via-transparent to-blue-500/20 p-3">
+            <svg viewBox="0 0 100 100" className="h-full w-full">
+              <polyline
+                fill="none"
+                stroke="rgb(94,225,181)"
+                strokeWidth="3"
+                points={spark(term)}
+              />
+            </svg>
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+            {[
+              { label: "Front", value: "18.1%" },
+              { label: "Mid", value: "22.4%" },
+              { label: "Back", value: "19.0%" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">{item.label}</p>
+                <p className="mt-1 font-semibold text-[var(--foreground)]">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Skew Curve</p>
+          <div className="mt-4 h-40 rounded-xl bg-gradient-to-br from-purple-500/15 via-transparent to-rose-500/15 p-3">
+            <svg viewBox="0 0 100 100" className="h-full w-full">
+              <polyline
+                fill="none"
+                stroke="rgb(91,177,255)"
+                strokeWidth="3"
+                points={spark(skew)}
+              />
+            </svg>
+          </div>
+          <div className="mt-4 flex items-center justify-between text-xs text-[var(--muted)]">
+            <span>Low strike</span>
+            <span>ATM</span>
+            <span>High strike</span>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Volatility Matrix</p>
+          <div className="mt-4 grid grid-cols-6 gap-2 text-center text-[11px]">
+            {[12, 14, 16, 18, 20, 22].map((row, r) =>
+              [5, 10, 15, 20, 25, 30].map((col, c) => {
+                const val = row + col / 2 + r * 0.4 + c * 0.2;
+                const intensity = Math.min(1, (val - 12) / 16);
+                return (
+                  <div
+                    key={`${r}-${c}`}
+                    className="rounded-lg border border-[var(--border)] px-2 py-2"
+                    style={{ background: `rgba(91, 177, 255, ${0.08 + intensity * 0.3})` }}
+                  >
+                    {val.toFixed(1)}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EquityHubView({ flows }: { flows: typeof mockFlowOrders }) {
+  const topTickers = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of flows) {
+      map.set(row.ticker, (map.get(row.ticker) ?? 0) + row.size);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  }, [flows]);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="grid gap-6 lg:grid-cols-[1.05fr_1fr]">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Support and Resistance</p>
+          <h3 className="text-2xl font-semibold">Equity Hub</h3>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Map options positioning into price zones, with a focus on pressure, pinning, and high interest strikes.
+          </p>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            {[
+              { label: "Key Support", value: "592 - 595", color: "text-[var(--accent)]" },
+              { label: "Key Resistance", value: "612 - 618", color: "text-[var(--danger)]" },
+              { label: "OI Pivot", value: "604.5", color: "text-[var(--accent-2)]" },
+              { label: "Flow Tilt", value: "Bullish", color: "text-[var(--accent)]" },
+            ].map((card) => (
+              <div key={card.label} className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">{card.label}</p>
+                <p className={`mt-1 text-lg font-semibold ${card.color}`}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Pressure Map</p>
+          <div className="mt-4 space-y-3">
+            {["Support", "Neutral", "Resistance"].map((band, idx) => (
+              <div key={band} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="uppercase tracking-[0.18em] text-[var(--muted)]">{band}</span>
+                  <span className="font-semibold text-[var(--foreground)]">{idx === 0 ? "590 - 598" : idx === 1 ? "598 - 610" : "610 - 622"}</span>
+                </div>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${idx === 0 ? 65 : idx === 1 ? 45 : 70}%`, background: idx === 0 ? "var(--accent)" : idx === 1 ? "var(--accent-2)" : "var(--danger)" }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Active Names</p>
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+          {topTickers.map(([ticker, size]) => (
+            <div key={ticker} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+              <div className="flex items-center justify-between">
+                <span className="text-lg font-semibold text-[var(--accent-2)]">{ticker}</span>
+                <span className="text-xs text-[var(--muted)]">Flow Size</span>
+              </div>
+              <p className="mt-2 text-xl font-semibold text-[var(--foreground)]">{size.toLocaleString()}</p>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-[var(--accent-2)]"
+                  style={{ width: `${Math.min(100, (size / (topTickers[0]?.[1] ?? 1)) * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TraceToolView() {
+  return (
+    <div className="p-4">
+      <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Heatmap the Index</p>
+        <h3 className="text-lg font-semibold">Trace</h3>
+        <p className="mt-1 text-xs text-[var(--muted)]">Visualize pressure zones, gamma pockets, and strike pinning.</p>
+      </div>
+      <GexHeatmapView />
+    </div>
+  );
+}
+
+function CompassToolView({ flows }: { flows: typeof mockFlowOrders }) {
+  const sentiment = useMemo(() => {
+    const bullish = flows.filter((r) => r.direction === "BULLISH").length;
+    const bearish = flows.filter((r) => r.direction === "BEARISH").length;
+    const total = bullish + bearish || 1;
+    return Math.round((bullish / total) * 100);
+  }, [flows]);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Directional Context</p>
+        <h3 className="text-2xl font-semibold">Compass</h3>
+        <p className="mt-2 text-sm text-[var(--muted)]">Combine flow, volatility, and positioning into a single bias view.</p>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Bias Meter</p>
+          <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${sentiment}%` }} />
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs text-[var(--muted)]">
+            <span>Bearish</span>
+            <span>Bullish</span>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {[
+              { label: "Flow Pulse", value: "Strong" },
+              { label: "Vol Regime", value: "Rising" },
+              { label: "Dealer Gamma", value: "Positive" },
+              { label: "Skew", value: "Put Heavy" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">{item.label}</p>
+                <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Quadrant Read</p>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {[
+              { label: "Risk On", detail: "Call buyers leading", color: "var(--accent)" },
+              { label: "Chop", detail: "Mixed positioning", color: "var(--accent-2)" },
+              { label: "Defense", detail: "Put demand rising", color: "var(--warning)" },
+              { label: "Risk Off", detail: "Dealers short", color: "var(--danger)" },
+            ].map((quad) => (
+              <div key={quad.label} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">{quad.label}</p>
+                <p className="mt-2 text-sm font-semibold" style={{ color: quad.color }}>
+                  {quad.detail}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OptionsCalculatorView({ flows }: { flows: typeof mockFlowOrders }) {
+  const [symbol, setSymbol] = useState("RKLB");
+  const [type, setType] = useState<"call" | "put">("call");
+  const [position, setPosition] = useState<"long" | "short">("long");
+  const [positionType, setPositionType] = useState<"buy" | "write">("buy");
+  const [contracts, setContracts] = useState(1);
+  const [entryPrice, setEntryPrice] = useState(1.25);
+  const [spot, setSpot] = useState(6.5);
+  const [strike, setStrike] = useState(7);
+  const [days, setDays] = useState(45);
+  const [rate, setRate] = useState(4.5);
+  const [dividend, setDividend] = useState(0);
+  const [vol, setVol] = useState(55);
+  const [targetSpot, setTargetSpot] = useState(7.5);
+  const [minPrice, setMinPrice] = useState(4.5);
+  const [maxPrice, setMaxPrice] = useState(9);
+  const [priceStep, setPriceStep] = useState(0.5);
+  const [dayStep, setDayStep] = useState(1);
+  const [columns, setColumns] = useState(7);
+
+  const expiryOptions = [
+    { label: "Jan 9, 2026", days: 330 },
+    { label: "Mar 20, 2026", days: 400 },
+    { label: "Jun 19, 2026", days: 490 },
+    { label: "Sep 18, 2026", days: 580 },
+  ];
+
+  const strikeOptions = [
+    { label: "$7.00 CALL - $1.25", strike: 7, type: "call" as const, premium: 1.25 },
+    { label: "$7.50 CALL - $0.95", strike: 7.5, type: "call" as const, premium: 0.95 },
+    { label: "$6.50 PUT - $0.88", strike: 6.5, type: "put" as const, premium: 0.88 },
+    { label: "$6.00 PUT - $0.62", strike: 6, type: "put" as const, premium: 0.62 },
+  ];
+
+  useEffect(() => {
+    setPosition(positionType === "buy" ? "long" : "short");
+  }, [positionType]);
+
+  const summary = useMemo(() => {
+    const parseCompact = (value: string) => {
+      const v = value.replace(/[$,]/g, "");
+      const num = parseFloat(v.replace(/[KM]/g, ""));
+      const mult = v.includes("M") ? 1_000_000 : v.includes("K") ? 1_000 : 1;
+      return isNaN(num) ? 0 : num * mult;
+    };
+    const totalCalls = flows.filter((r) => r.contractType === "call").length;
+    const totalPuts = flows.filter((r) => r.contractType === "put").length;
+    const callNotional = flows
+      .filter((r) => r.contractType === "call")
+      .reduce((sum, r) => sum + parseCompact(r.premium), 0);
+    const putNotional = flows
+      .filter((r) => r.contractType === "put")
+      .reduce((sum, r) => sum + parseCompact(r.premium), 0);
+    const putCallRatio = totalCalls > 0 ? (totalPuts / totalCalls).toFixed(2) : "0";
+    const bullPct = flows.length > 0
+      ? Math.round((flows.filter((r) => r.direction === "BULLISH").length / flows.length) * 100)
+      : 50;
+    const formatNotional = (n: number) => {
+      if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+      if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+      if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+      return `$${n.toFixed(0)}`;
+    };
+    return {
+      totalCalls,
+      totalPuts,
+      callNotional: formatNotional(callNotional),
+      putNotional: formatNotional(putNotional),
+      putCallRatio,
+      bullPct,
+    };
+  }, [flows]);
+
+  const bsPrice = useCallback(
+    (s: number, tDays: number) => {
+      const sClamped = Math.max(0.01, s);
+      const k = Math.max(0.01, strike);
+      const t = Math.max(1, tDays) / 365;
+      const r = rate / 100;
+      const q = dividend / 100;
+      const sigma = Math.max(0.0001, vol / 100);
+
+      const erf = (x: number) => {
+        const sign = x >= 0 ? 1 : -1;
+        const a1 = 0.254829592;
+        const a2 = -0.284496736;
+        const a3 = 1.421413741;
+        const a4 = -1.453152027;
+        const a5 = 1.061405429;
+        const p = 0.3275911;
+        const absX = Math.abs(x);
+        const t1 = 1 / (1 + p * absX);
+        const y = 1 - ((((a5 * t1 + a4) * t1 + a3) * t1 + a2) * t1 + a1) * t1 * Math.exp(-absX * absX);
+        return sign * y;
+      };
+
+      const normCdf = (x: number) => 0.5 * (1 + erf(x / Math.sqrt(2)));
+      const sqrtT = Math.sqrt(t);
+      const d1 = (Math.log(sClamped / k) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrtT);
+      const d2 = d1 - sigma * sqrtT;
+
+      const nd1 = normCdf(d1);
+      const nd2 = normCdf(d2);
+      const nmd1 = normCdf(-d1);
+      const nmd2 = normCdf(-d2);
+
+      const discR = Math.exp(-r * t);
+      const discQ = Math.exp(-q * t);
+
+      const call = sClamped * discQ * nd1 - k * discR * nd2;
+      const put = k * discR * nmd2 - sClamped * discQ * nmd1;
+
+      return type === "call" ? call : put;
+    },
+    [dividend, rate, strike, type, vol]
+  );
+
+  const calc = useMemo(() => {
+    const multiplier = 100;
+    const qty = Math.max(1, Math.round(contracts));
+    const s = Math.max(0.01, spot);
+    const k = Math.max(0.01, strike);
+    const t = Math.max(1, days) / 365;
+    const r = rate / 100;
+    const q = dividend / 100;
+    const sigma = Math.max(0.0001, vol / 100);
+
+    const erf = (x: number) => {
+      const sign = x >= 0 ? 1 : -1;
+      const a1 = 0.254829592;
+      const a2 = -0.284496736;
+      const a3 = 1.421413741;
+      const a4 = -1.453152027;
+      const a5 = 1.061405429;
+      const p = 0.3275911;
+      const absX = Math.abs(x);
+      const t1 = 1 / (1 + p * absX);
+      const y = 1 - ((((a5 * t1 + a4) * t1 + a3) * t1 + a2) * t1 + a1) * t1 * Math.exp(-absX * absX);
+      return sign * y;
+    };
+
+    const normCdf = (x: number) => 0.5 * (1 + erf(x / Math.sqrt(2)));
+    const normPdf = (x: number) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+
+    const sqrtT = Math.sqrt(t);
+    const d1 = (Math.log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+
+    const nd1 = normCdf(d1);
+    const nd2 = normCdf(d2);
+    const nmd1 = normCdf(-d1);
+    const nmd2 = normCdf(-d2);
+
+    const discR = Math.exp(-r * t);
+    const discQ = Math.exp(-q * t);
+
+    const call = s * discQ * nd1 - k * discR * nd2;
+    const put = k * discR * nmd2 - s * discQ * nmd1;
+
+    const theo = type === "call" ? call : put;
+    const delta = type === "call" ? discQ * nd1 : discQ * (nd1 - 1);
+    const gamma = (discQ * normPdf(d1)) / (s * sigma * sqrtT);
+    const vega = s * discQ * normPdf(d1) * sqrtT * 0.01;
+    const thetaCall =
+      (-s * discQ * normPdf(d1) * sigma) / (2 * sqrtT) -
+      r * k * discR * nd2 +
+      q * s * discQ * nd1;
+    const thetaPut =
+      (-s * discQ * normPdf(d1) * sigma) / (2 * sqrtT) +
+      r * k * discR * nmd2 -
+      q * s * discQ * nmd1;
+    const theta = (type === "call" ? thetaCall : thetaPut) / 365;
+
+    const intrinsic = type === "call" ? Math.max(0, s - k) : Math.max(0, k - s);
+    const extrinsic = Math.max(0, theo - intrinsic);
+
+    const entry = Math.max(0, entryPrice);
+    const sign = position === "long" ? 1 : -1;
+    const entryCost = entry * multiplier * qty * sign;
+    const theoValue = theo * multiplier * qty * sign;
+    const pnlNow = theoValue - entryCost;
+
+    const targetIntrinsic = type === "call"
+      ? Math.max(0, targetSpot - k)
+      : Math.max(0, k - targetSpot);
+    const targetValue = targetIntrinsic * multiplier * qty * sign;
+    const pnlAtExpiry = targetValue - entryCost;
+
+    const breakeven = type === "call" ? k + entry : k - entry;
+    const maxProfit = position === "long"
+      ? type === "call"
+        ? Infinity
+        : (k - entry) * multiplier * qty
+      : entry * multiplier * qty;
+    const maxLoss = position === "long"
+      ? entry * multiplier * qty
+      : type === "call"
+        ? Infinity
+        : (k - entry) * multiplier * qty;
+
+    return {
+      theo,
+      delta,
+      gamma,
+      vega,
+      theta,
+      intrinsic,
+      extrinsic,
+      entryCost,
+      theoValue,
+      pnlNow,
+      pnlAtExpiry,
+      breakeven,
+      maxProfit,
+      maxLoss,
+      qty,
+      multiplier,
+    };
+  }, [contracts, days, dividend, entryPrice, position, rate, spot, strike, targetSpot, type, vol]);
+
+  const matrix = useMemo(() => {
+    const priceMin = Math.min(minPrice, maxPrice);
+    const priceMax = Math.max(minPrice, maxPrice);
+    const step = Math.max(0.01, priceStep);
+    const levels: number[] = [];
+    for (let p = priceMax; p >= priceMin - 1e-6; p -= step) {
+      levels.push(Number(p.toFixed(2)));
+    }
+
+    const cols = Math.max(2, Math.min(14, Math.round(columns)));
+    const dayDelta = Math.max(1, Math.round(dayStep));
+    const colDays = Array.from({ length: cols }, (_, i) => Math.max(1, days - i * dayDelta));
+    const today = new Date();
+    const colLabels = colDays.map((d, i) => {
+      const date = new Date(today);
+      date.setDate(today.getDate() + i * dayDelta);
+      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return { label, daysLeft: d };
+    });
+
+    const entry = Math.max(0, entryPrice);
+    const sign = position === "long" ? 1 : -1;
+    const valueAt = (s: number, d: number) => bsPrice(s, d);
+    const pnlAt = (s: number, d: number) => (valueAt(s, d) - entry) * sign;
+
+    const maxPnl = Math.max(
+      0.01,
+      ...levels.flatMap((level) => colLabels.map((col) => Math.abs(pnlAt(level, col.daysLeft))))
+    );
+
+    return { levels, colLabels, valueAt, pnlAt, maxPnl };
+  }, [bsPrice, columns, dayStep, days, entryPrice, maxPrice, minPrice, position, priceStep]);
+
+  const fmtMoney = (n: number) => {
+    if (!Number.isFinite(n)) return "Unlimited";
+    const sign = n < 0 ? "-" : "";
+    const abs = Math.abs(n);
+    return `${sign}$${abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Options Profit Calculator</p>
+          <h3 className="text-2xl font-semibold">Options Profit & Greeks</h3>
+          <p className="mt-2 text-sm text-[var(--muted)]">Estimate value, Greeks, and profit using Black-Scholes assumptions.</p>
+        </div>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+          Contract size {calc.multiplier}
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          {
+            label: "Put/Call Ratio",
+            value: summary.putCallRatio,
+            sub: "Bullish",
+            gauge: Math.min(100, Math.max(0, (parseFloat(summary.putCallRatio) / 3) * 100)),
+            color: "var(--accent-2)",
+          },
+          {
+            label: "Puts",
+            value: summary.totalPuts.toLocaleString(),
+            sub: summary.putNotional,
+            gauge: Math.min(100, summary.totalPuts),
+            color: "var(--danger)",
+          },
+          {
+            label: "Calls",
+            value: summary.totalCalls.toLocaleString(),
+            sub: summary.callNotional,
+            gauge: Math.min(100, summary.totalCalls),
+            color: "var(--accent)",
+          },
+          {
+            label: "Bullish %",
+            value: `${summary.bullPct}%`,
+            sub: "Sentiment",
+            gauge: summary.bullPct,
+            color: "var(--accent)",
+          },
+        ].map((stat) => (
+          <div key={stat.label} className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
+            <div className="grid grid-cols-[1fr_auto] items-center gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                  {stat.label}
+                </p>
+                <p className="mt-1 text-2xl font-semibold">{stat.value}</p>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{stat.sub}</p>
+              </div>
+              <div className="flex h-full items-center justify-center">
+                <Gauge value={stat.gauge} color={stat.color} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Contract Selection</p>
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <label className="text-xs text-[var(--muted)]">
+            Symbol
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Position Type
+            <select
+              value={positionType}
+              onChange={(e) => setPositionType(e.target.value as "buy" | "write")}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            >
+              <option value="buy">Buy</option>
+              <option value="write">Write</option>
+            </select>
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Expiration Date
+            <select
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            >
+              {expiryOptions.map((exp) => (
+                <option key={exp.days} value={exp.days}>{exp.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Strike & Type
+            <select
+              value={`${strike}-${type}`}
+              onChange={(e) => {
+                const next = strikeOptions.find((opt) => `${opt.strike}-${opt.type}` === e.target.value);
+                if (next) {
+                  setStrike(next.strike);
+                  setType(next.type);
+                  setEntryPrice(next.premium);
+                }
+              }}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            >
+              {strikeOptions.map((opt) => (
+                <option key={`${opt.strike}-${opt.type}`} value={`${opt.strike}-${opt.type}`}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Min Price ($)
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              value={minPrice}
+              onChange={(e) => setMinPrice(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Max Price ($)
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Premium ($)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={entryPrice}
+              onChange={(e) => setEntryPrice(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Implied Volatility (%)
+            <input
+              type="number"
+              min={0.01}
+              step="0.1"
+              value={vol}
+              onChange={(e) => setVol(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <label className="text-xs text-[var(--muted)]">
+            Spot Price
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={spot}
+              onChange={(e) => setSpot(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Days to Expiration
+            <input
+              type="number"
+              min={1}
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Volatility (%)
+            <input
+              type="number"
+              min={0.01}
+              step="0.1"
+              value={vol}
+              onChange={(e) => setVol(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Rate (%)
+            <input
+              type="number"
+              step="0.1"
+              value={rate}
+              onChange={(e) => setRate(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Dividend (%)
+            <input
+              type="number"
+              step="0.1"
+              value={dividend}
+              onChange={(e) => setDividend(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+          <label className="text-xs text-[var(--muted)]">
+            Target Spot (Expiry)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={targetSpot}
+              onChange={(e) => setTargetSpot(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--foreground)]"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Options Value Matrix</p>
+            <p className="text-sm font-semibold">Projected option value by price and date</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--muted)]">
+            <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-emerald-300">Profit</span>
+            <span className="rounded-full bg-red-500/15 px-2 py-1 text-red-300">Loss</span>
+          </div>
+        </div>
+
+        <div className="grid gap-3 px-4 py-4 lg:grid-cols-[1fr_auto]">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <label className="text-xs text-[var(--muted)]">
+              Min Price
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={minPrice}
+                onChange={(e) => setMinPrice(Number(e.target.value))}
+                className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="text-xs text-[var(--muted)]">
+              Max Price
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={maxPrice}
+                onChange={(e) => setMaxPrice(Number(e.target.value))}
+                className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="text-xs text-[var(--muted)]">
+              Price Step
+              <input
+                type="number"
+                min={0.1}
+                step="0.1"
+                value={priceStep}
+                onChange={(e) => setPriceStep(Number(e.target.value))}
+                className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="text-xs text-[var(--muted)]">
+              Day Step
+              <input
+                type="number"
+                min={1}
+                step="1"
+                value={dayStep}
+                onChange={(e) => setDayStep(Number(e.target.value))}
+                className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <label className="text-xs text-[var(--muted)]">
+            Columns
+            <input
+              type="number"
+              min={2}
+              max={14}
+              step="1"
+              value={columns}
+              onChange={(e) => setColumns(Number(e.target.value))}
+              className="tv-input mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+
+        <div className="tv-matrix-wrap overflow-auto px-4 pb-4">
+          <table className="tv-matrix w-full min-w-[720px] text-[11px]">
+            <thead>
+              <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+                <th className="px-3 py-2 text-left">Price</th>
+                {matrix.colLabels.map((col) => (
+                  <th key={col.label} className="px-3 py-2 text-center">
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.levels.map((level) => (
+                <tr key={level} className="border-b border-[var(--border)]">
+                  <td className="px-3 py-2 text-[var(--muted)]">${level.toFixed(2)}</td>
+                  {matrix.colLabels.map((col) => {
+                    const val = matrix.valueAt(level, col.daysLeft);
+                    const pnl = matrix.pnlAt(level, col.daysLeft);
+                    const intensity = Math.min(1, Math.abs(pnl) / matrix.maxPnl);
+                    const bg = pnl >= 0
+                      ? `rgba(16, 185, 129, ${0.08 + intensity * 0.45})`
+                      : `rgba(239, 68, 68, ${0.08 + intensity * 0.45})`;
+                    return (
+                      <td
+                        key={`${level}-${col.label}`}
+                        className="px-3 py-2 text-center font-semibold"
+                        style={{ background: bg }}
+                        title={`Value: $${val.toFixed(2)} | P/L: ${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)}`}
+                      >
+                        ${val.toFixed(2)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { label: "Theoretical Price", value: `$${calc.theo.toFixed(2)}`, color: "text-[var(--accent)]" },
+            { label: "Breakeven", value: `$${calc.breakeven.toFixed(2)}`, color: "text-[var(--accent-2)]" },
+            { label: "Entry Cost", value: fmtMoney(calc.entryCost), color: "text-[var(--muted)]" },
+            { label: "Value Now", value: fmtMoney(calc.theoValue), color: "text-[var(--accent)]" },
+            { label: "P/L Now", value: fmtMoney(calc.pnlNow), color: calc.pnlNow >= 0 ? "text-[var(--accent)]" : "text-[var(--danger)]" },
+            { label: "P/L at Expiry", value: fmtMoney(calc.pnlAtExpiry), color: calc.pnlAtExpiry >= 0 ? "text-[var(--accent)]" : "text-[var(--danger)]" },
+            { label: "Max Profit", value: fmtMoney(calc.maxProfit), color: "text-[var(--accent)]" },
+            { label: "Max Loss", value: fmtMoney(calc.maxLoss), color: "text-[var(--danger)]" },
+          ].map((card) => (
+            <div key={card.label} className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">{card.label}</p>
+              <p className={`mt-2 text-lg font-semibold ${card.color}`}>{card.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="tv-card rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Greeks & Value</p>
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div className="tv-card rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Delta</p>
+              <p className="mt-1 text-base font-semibold text-[var(--accent-2)]">{calc.delta.toFixed(3)}</p>
+            </div>
+            <div className="tv-card rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Gamma</p>
+              <p className="mt-1 text-base font-semibold text-[var(--warning)]">{calc.gamma.toFixed(4)}</p>
+            </div>
+            <div className="tv-card rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Vega</p>
+              <p className="mt-1 text-base font-semibold text-[var(--accent)]">{calc.vega.toFixed(3)}</p>
+            </div>
+            <div className="tv-card rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Theta (per day)</p>
+              <p className="mt-1 text-base font-semibold text-[var(--danger)]">{calc.theta.toFixed(3)}</p>
+            </div>
+            <div className="tv-card rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Intrinsic</p>
+              <p className="mt-1 text-base font-semibold text-[var(--muted)]">{calc.intrinsic.toFixed(2)}</p>
+            </div>
+            <div className="tv-card rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Extrinsic</p>
+              <p className="mt-1 text-base font-semibold text-[var(--accent-2)]">{calc.extrinsic.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-[var(--muted)]">
+        Estimates only. Pricing uses Black-Scholes and does not include slippage, fees, or volatility skew.
+      </p>
     </div>
   );
 }
