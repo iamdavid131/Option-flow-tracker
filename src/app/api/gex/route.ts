@@ -1,7 +1,114 @@
 import { NextRequest, NextResponse } from "next/server";
+import fs from "fs/promises";
+import path from "path";
 
-const API_KEY = process.env.MASSIVE_API_KEY ?? "";
+const API_KEY =
+  process.env.MASSIVE_API_KEY ??
+  process.env.POLYGON_API_KEY ??
+  process.env.POLYGON_KEY ??
+  process.env.NEXT_PUBLIC_POLYGON_API_KEY ??
+  "";
 const BASE = "https://api.polygon.io";
+const SNAPSHOTS_DIR = path.join(process.cwd(), "data", "gex-snapshots");
+
+function normalizeSnapshotPayload(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  snapshotData: any,
+  ticker: string,
+  metricKey: "gex" | "vex" | "charm",
+  time?: string
+) {
+  if (!snapshotData || typeof snapshotData !== "object") return null;
+
+  return {
+    ...snapshotData,
+    ticker: (snapshotData.ticker ?? ticker).toUpperCase(),
+    metric: metricKey,
+    timestamp: snapshotData.timestamp ?? time ?? new Date().toISOString(),
+  };
+}
+
+async function getLatestLocalSnapshot(
+  ticker: string,
+  metricKey: "gex" | "vex" | "charm"
+) {
+  try {
+    const files = await fs.readdir(SNAPSHOTS_DIR);
+    const metricPrefix = `${ticker}_${metricKey}_`;
+    const legacyPrefix = `${ticker}_`;
+
+    const candidates = files
+      .filter((file) => {
+        if (!file.endsWith(".json")) return false;
+        if (file.startsWith(metricPrefix)) return true;
+        return metricKey === "gex" && file.startsWith(legacyPrefix);
+      })
+      .sort()
+      .reverse();
+
+    for (const file of candidates) {
+      try {
+        const raw = await fs.readFile(path.join(SNAPSHOTS_DIR, file), "utf-8");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed = JSON.parse(raw) as any;
+
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const latest = parsed[parsed.length - 1];
+          const normalized = normalizeSnapshotPayload(latest?.data, ticker, metricKey, latest?.time);
+          if (normalized) return normalized;
+          continue;
+        }
+
+        const normalized = normalizeSnapshotPayload(parsed, ticker, metricKey);
+        if (normalized) return normalized;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchSpotPrice(ticker: string): Promise<number> {
+  const snapshotUrl = `${BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${ticker}&apiKey=${API_KEY}`;
+  try {
+    const stockRes = await fetch(snapshotUrl, { next: { revalidate: 5 } });
+    const stockData = await stockRes.json();
+    const snapSpot: number =
+      stockData.tickers?.[0]?.fmv ??
+      stockData.tickers?.[0]?.lastTrade?.p ??
+      stockData.tickers?.[0]?.day?.c ??
+      0;
+    if (snapSpot > 0) return snapSpot;
+  } catch {
+    // try next source
+  }
+
+  const lastTradeUrl = `${BASE}/v2/last/trade/${ticker}?apiKey=${API_KEY}`;
+  try {
+    const tradeRes = await fetch(lastTradeUrl, { next: { revalidate: 5 } });
+    const tradeData = await tradeRes.json();
+    const tradePrice: number = tradeData.results?.p ?? 0;
+    if (tradePrice > 0) return tradePrice;
+  } catch {
+    // try next source
+  }
+
+  const prevCloseUrl = `${BASE}/v2/aggs/ticker/${ticker}/prev?adjusted=true&apiKey=${API_KEY}`;
+  try {
+    const prevRes = await fetch(prevCloseUrl, { next: { revalidate: 30 } });
+    const prevData = await prevRes.json();
+    const prevClose: number = prevData.results?.[0]?.c ?? 0;
+    if (prevClose > 0) return prevClose;
+  } catch {
+    // no fallback left
+  }
+
+  return 0;
+}
 
 /**
  * GET /api/gex?ticker=SPY
@@ -19,21 +126,32 @@ const BASE = "https://api.polygon.io";
 export async function GET(req: NextRequest) {
   const ticker = (req.nextUrl.searchParams.get("ticker") ?? "SPY").toUpperCase();
   const metric = (req.nextUrl.searchParams.get("metric") ?? "gex").toLowerCase();
-  const metricKey = metric === "vex" || metric === "charm" ? metric : "gex";
+  const metricKey: "gex" | "vex" | "charm" = metric === "vex" || metric === "charm" ? metric : "gex";
   const RISK_FREE_RATE = 0.05; // annualized, used for Charm
+
+  if (!API_KEY) {
+    const fallback = await getLatestLocalSnapshot(ticker, metricKey);
+    if (fallback) {
+      return NextResponse.json({ ...fallback, source: "snapshot" as const });
+    }
+    return NextResponse.json(
+      {
+        error:
+          "Live options API key not found. Set MASSIVE_API_KEY (or POLYGON_API_KEY) to enable real-time data; no local snapshot was found for this ticker.",
+      },
+      { status: 400 }
+    );
+  }
 
   try {
     /* ── 1. Get spot price ── */
-    const stockUrl = `${BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${ticker}&apiKey=${API_KEY}`;
-    const stockRes = await fetch(stockUrl, { next: { revalidate: 5 } });
-    const stockData = await stockRes.json();
-    const spotPrice: number =
-      stockData.tickers?.[0]?.fmv ??
-      stockData.tickers?.[0]?.lastTrade?.p ??
-      stockData.tickers?.[0]?.day?.c ??
-      0;
+    const spotPrice = await fetchSpotPrice(ticker);
 
     if (spotPrice === 0) {
+      const fallback = await getLatestLocalSnapshot(ticker, metricKey);
+      if (fallback) {
+        return NextResponse.json({ ...fallback, source: "snapshot" as const });
+      }
       return NextResponse.json({ error: "Could not determine spot price" }, { status: 400 });
     }
 
@@ -256,6 +374,7 @@ export async function GET(req: NextRequest) {
       expiryDates, // Return all expiry dates
       strikes,
       metric: metricKey,
+      source: "live" as const,
       grid: flatGrid,
       cellDetails,
       stats: {
@@ -275,6 +394,12 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.error("GEX API error:", error);
+
+    const fallback = await getLatestLocalSnapshot(ticker, metricKey);
+    if (fallback) {
+      return NextResponse.json({ ...fallback, source: "snapshot" as const });
+    }
+
     return NextResponse.json(
       { error: "Failed to compute GEX data" },
       { status: 500 }

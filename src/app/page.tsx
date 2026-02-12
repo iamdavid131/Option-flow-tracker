@@ -114,17 +114,37 @@ const SHOW_TOOL_TABS = false;
 
 
 export default function Home() {
+  type StockSearchResult = {
+    ticker: string;
+    name: string;
+    market: string;
+    locale: string;
+    primaryExchange: string;
+  };
+
   const [activeTab, setActiveTab] = useState<"flow" | "heatmap" | "journal" | "news" | "worldmap" | "darkpool" | "tools">("flow");
   const [dpSubTab, setDpSubTab] = useState<"darkpool" | "chain">("darkpool");
   const [toolsSubTab, setToolsSubTab] = useState<(typeof TOOL_TABS)[number]["id"]>("calculator");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [toolsSectionOpen, setToolsSectionOpen] = useState(true);
   const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<StockSearchResult[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(-1);
   const [activeChip, setActiveChip] = useState("All");
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [mounted, setMounted] = useState(false);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
+  const searchCacheRef = useRef<Record<string, StockSearchResult[]>>({});
+
+  const selectSearchResult = (item: StockSearchResult) => {
+    setSearch(item.ticker.toUpperCase());
+    setSearchOpen(false);
+    setSearchActiveIndex(-1);
+  };
 
   const flowTickerQuery = activeTab === "flow" ? search.trim().toUpperCase() : "";
 
@@ -214,6 +234,102 @@ export default function Home() {
       r.ticker.toLowerCase().includes(term)
     );
   }, [search, dpSource]);
+
+  useEffect(() => {
+    const query = search.trim().toUpperCase();
+
+    if (query.length < 1) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchActiveIndex(-1);
+      return;
+    }
+
+    const localTickers = Array.from(
+      new Set([...flowSource.map((row) => row.ticker), ...dpSource.map((row) => row.ticker)])
+    )
+      .filter((ticker) => ticker.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 12)
+      .map((ticker) => ({
+        ticker,
+        name: `${ticker} (Local)`,
+        market: "",
+        locale: "",
+        primaryExchange: "",
+      }));
+
+    const cachedExact = searchCacheRef.current[query];
+    if (cachedExact) {
+      setSearchResults(cachedExact.length > 0 ? cachedExact : localTickers);
+      setSearchLoading(false);
+      setSearchActiveIndex(-1);
+      return;
+    }
+
+    const cachedPrefix = Object.entries(searchCacheRef.current)
+      .filter(([key]) => query.startsWith(key) && key.length >= 1)
+      .sort((a, b) => b[0].length - a[0].length)[0]?.[1];
+    if (cachedPrefix && cachedPrefix.length > 0) {
+      setSearchResults(
+        cachedPrefix
+          .filter((item) => item.ticker.toUpperCase().includes(query) || item.name.toUpperCase().includes(query))
+          .slice(0, 12)
+      );
+      setSearchActiveIndex(-1);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const response = await fetch(`/api/stock-search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const apiResults = Array.isArray(data.results) ? data.results as StockSearchResult[] : [];
+
+        if (apiResults.length > 0) {
+          searchCacheRef.current[query] = apiResults;
+          setSearchResults(apiResults);
+          setSearchActiveIndex(-1);
+          return;
+        }
+        searchCacheRef.current[query] = localTickers;
+        setSearchResults(localTickers);
+        setSearchActiveIndex(-1);
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
+
+        searchCacheRef.current[query] = localTickers;
+        setSearchResults(localTickers);
+        setSearchActiveIndex(-1);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 90);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [search, flowSource, dpSource]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!searchBoxRef.current) return;
+      if (!searchBoxRef.current.contains(event.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    return () => window.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
 
   /* ---------- Stats ---------- */
   const totalCalls = flowSource.filter(
@@ -440,10 +556,53 @@ export default function Home() {
           </div>
 
           {/* Search */}
-          <div className="relative flex-1 max-w-md">
+          <div ref={searchBoxRef} className="relative flex-1 max-w-md">
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value.toUpperCase());
+                setSearchOpen(true);
+                setSearchActiveIndex(-1);
+              }}
+              onFocus={() => {
+                if (search.trim().length > 0) {
+                  setSearchOpen(true);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  if (searchOpen && searchResults.length > 0) {
+                    e.preventDefault();
+                    setSearchActiveIndex((prev) => (prev + 1) % searchResults.length);
+                  }
+                  return;
+                }
+
+                if (e.key === "ArrowUp") {
+                  if (searchOpen && searchResults.length > 0) {
+                    e.preventDefault();
+                    setSearchActiveIndex((prev) => (prev <= 0 ? searchResults.length - 1 : prev - 1));
+                  }
+                  return;
+                }
+
+                if (e.key === "Enter") {
+                  if (searchOpen && searchResults.length > 0) {
+                    const index = searchActiveIndex >= 0 ? searchActiveIndex : 0;
+                    const selected = searchResults[index];
+                    if (selected) {
+                      e.preventDefault();
+                      selectSearchResult(selected);
+                    }
+                  }
+                  return;
+                }
+
+                if (e.key === "Escape") {
+                  setSearchOpen(false);
+                  setSearchActiveIndex(-1);
+                }
+              }}
               placeholder="Search a Ticker"
               className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-2.5 pl-10 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
             />
@@ -460,6 +619,36 @@ export default function Home() {
                 d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1010.5 18a7.5 7.5 0 006.15-3.35z"
               />
             </svg>
+
+            {searchOpen && search.trim().length > 0 && (
+              <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/30">
+                {searchLoading ? (
+                  <div className="px-3 py-2.5 text-xs text-[var(--muted)]">Searching stocks…</div>
+                ) : searchResults.length > 0 ? (
+                  <div className="max-h-72 overflow-y-auto">
+                    {searchResults.map((item, index) => (
+                      <button
+                        key={`${item.ticker}-${item.primaryExchange}-${item.name}`}
+                        type="button"
+                        onMouseEnter={() => setSearchActiveIndex(index)}
+                        onClick={() => selectSearchResult(item)}
+                        className={`flex w-full items-center justify-between gap-3 border-b border-[var(--border)]/40 px-3 py-2.5 text-left last:border-b-0 hover:bg-white/[0.03] ${searchActiveIndex === index ? "bg-white/[0.05]" : ""}`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-[var(--foreground)]">{item.ticker}</p>
+                          <p className="truncate text-xs text-[var(--muted)]">{item.name}</p>
+                        </div>
+                        <span className="shrink-0 text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                          {item.primaryExchange || item.market || "Stock"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-2.5 text-xs text-[var(--muted)]">No matching stocks found.</div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -725,6 +914,7 @@ type GexStats = {
 };
 type GexData = {
   metric?: "gex" | "vex" | "charm";
+  source?: "live" | "snapshot";
   ticker: string;
   spotPrice: number;
   expiryDates: string[];
@@ -736,8 +926,20 @@ type GexData = {
 };
 
 function GexHeatmapView() {
+  type HeatmapStockSearchResult = {
+    ticker: string;
+    name: string;
+    market: string;
+    locale: string;
+    primaryExchange: string;
+  };
+
   const [ticker, setTicker] = useState("SPY");
   const [tickerInput, setTickerInput] = useState("SPY");
+  const [tickerSearchResults, setTickerSearchResults] = useState<HeatmapStockSearchResult[]>([]);
+  const [tickerSearchOpen, setTickerSearchOpen] = useState(false);
+  const [tickerSearchLoading, setTickerSearchLoading] = useState(false);
+  const [tickerSearchActiveIndex, setTickerSearchActiveIndex] = useState(-1);
   const [data, setData] = useState<GexData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -753,6 +955,18 @@ function GexHeatmapView() {
   const [showProfile, setShowProfile] = useState(false);
   const atmRowRef = useRef<HTMLTableRowElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
+  const tickerSearchRef = useRef<HTMLDivElement>(null);
+  const tickerSearchCacheRef = useRef<Record<string, HeatmapStockSearchResult[]>>({});
+
+  const selectTickerSearchResult = (item: HeatmapStockSearchResult) => {
+    const next = item.ticker.toUpperCase();
+    setTickerInput(next);
+    setTickerSearchOpen(false);
+    setTickerSearchActiveIndex(-1);
+    if (next !== ticker) {
+      setTicker(next);
+    }
+  };
 
   // ── Replay state ──
   const [snapshots, setSnapshots] = useState<{ time: Date; data: GexData }[]>([]);
@@ -932,7 +1146,84 @@ function GexHeatmapView() {
     e.preventDefault();
     const t = tickerInput.trim().toUpperCase();
     if (t && t !== ticker) setTicker(t);
+    setTickerSearchOpen(false);
   };
+
+  useEffect(() => {
+    const query = tickerInput.trim().toUpperCase();
+
+    if (query.length < 1) {
+      setTickerSearchResults([]);
+      setTickerSearchLoading(false);
+      setTickerSearchActiveIndex(-1);
+      return;
+    }
+
+    const cachedExact = tickerSearchCacheRef.current[query];
+    if (cachedExact) {
+      setTickerSearchResults(cachedExact);
+      setTickerSearchLoading(false);
+      setTickerSearchActiveIndex(-1);
+      return;
+    }
+
+    const cachedPrefix = Object.entries(tickerSearchCacheRef.current)
+      .filter(([key]) => query.startsWith(key) && key.length >= 1)
+      .sort((a, b) => b[0].length - a[0].length)[0]?.[1];
+    if (cachedPrefix && cachedPrefix.length > 0) {
+      setTickerSearchResults(
+        cachedPrefix
+          .filter((item) => item.ticker.toUpperCase().includes(query) || item.name.toUpperCase().includes(query))
+          .slice(0, 12)
+      );
+      setTickerSearchActiveIndex(-1);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      setTickerSearchLoading(true);
+      try {
+        const response = await fetch(`/api/stock-search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const json = await response.json();
+        const results = Array.isArray(json.results)
+          ? (json.results as HeatmapStockSearchResult[])
+          : [];
+        tickerSearchCacheRef.current[query] = results;
+        setTickerSearchResults(results);
+        setTickerSearchActiveIndex(-1);
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
+        setTickerSearchResults([]);
+        setTickerSearchActiveIndex(-1);
+      } finally {
+        setTickerSearchLoading(false);
+      }
+    }, 90);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [tickerInput]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!tickerSearchRef.current) return;
+      if (!tickerSearchRef.current.contains(event.target as Node)) {
+        setTickerSearchOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    return () => window.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
 
   const sendGrok = async () => {
     const text = grokInput.trim();
@@ -1060,6 +1351,11 @@ function GexHeatmapView() {
 
   const { strikes, expiryDates: allExpiryDates, grid, stats, spotPrice } = data;
   const metricLabel = metric === "gex" ? "GEX" : metric === "vex" ? "VEX" : "Charm";
+  const sourceLabel = data.source === "live" ? "Live" : "Snapshot";
+  const sourceClasses =
+    data.source === "live"
+      ? "text-emerald-300 border-emerald-400/30 bg-emerald-500/10"
+      : "text-amber-300 border-amber-400/30 bg-amber-500/10";
   const maxExpiries = allExpiryDates.length;
   const visibleCount = Math.min(expiryCount, maxExpiries);
   const expiryDates = allExpiryDates.slice(0, visibleCount);
@@ -1071,13 +1367,89 @@ function GexHeatmapView() {
     <div className="p-5">
       {/* ── Ticker search bar ── */}
       <div className="mb-5 flex flex-wrap items-center gap-4 relative">
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          <input
-            value={tickerInput}
-            onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-            placeholder="Ticker"
-            className="w-24 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-cyan-400/40"
-          />
+        <form onSubmit={handleSubmit} className="relative flex items-center gap-2" ref={tickerSearchRef}>
+          <div className="relative">
+            <input
+              value={tickerInput}
+              onChange={(e) => {
+                setTickerInput(e.target.value.toUpperCase());
+                setTickerSearchOpen(true);
+                setTickerSearchActiveIndex(-1);
+              }}
+              onFocus={() => {
+                if (tickerInput.trim().length > 0) {
+                  setTickerSearchOpen(true);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  if (tickerSearchOpen && tickerSearchResults.length > 0) {
+                    e.preventDefault();
+                    setTickerSearchActiveIndex((prev) => (prev + 1) % tickerSearchResults.length);
+                  }
+                  return;
+                }
+
+                if (e.key === "ArrowUp") {
+                  if (tickerSearchOpen && tickerSearchResults.length > 0) {
+                    e.preventDefault();
+                    setTickerSearchActiveIndex((prev) => (prev <= 0 ? tickerSearchResults.length - 1 : prev - 1));
+                  }
+                  return;
+                }
+
+                if (e.key === "Enter") {
+                  if (tickerSearchOpen && tickerSearchResults.length > 0) {
+                    const index = tickerSearchActiveIndex >= 0 ? tickerSearchActiveIndex : 0;
+                    const selected = tickerSearchResults[index];
+                    if (selected) {
+                      e.preventDefault();
+                      selectTickerSearchResult(selected);
+                    }
+                  }
+                  return;
+                }
+
+                if (e.key === "Escape") {
+                  setTickerSearchOpen(false);
+                  setTickerSearchActiveIndex(-1);
+                }
+              }}
+              placeholder="Ticker"
+              className="w-24 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-cyan-400/40"
+            />
+
+            {tickerSearchOpen && tickerInput.trim().length > 0 && (
+              <div className="absolute left-0 top-[calc(100%+6px)] z-50 w-72 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/30">
+                {tickerSearchLoading ? (
+                  <div className="px-3 py-2.5 text-xs text-[var(--muted)]">Searching stocks…</div>
+                ) : tickerSearchResults.length > 0 ? (
+                  <div className="max-h-72 overflow-y-auto">
+                    {tickerSearchResults.map((item, index) => (
+                      <button
+                        key={`${item.ticker}-${item.primaryExchange}-${item.name}`}
+                        type="button"
+                        onMouseEnter={() => setTickerSearchActiveIndex(index)}
+                        onClick={() => selectTickerSearchResult(item)}
+                        className={`flex w-full items-center justify-between gap-3 border-b border-[var(--border)]/40 px-3 py-2.5 text-left last:border-b-0 hover:bg-white/[0.03] ${tickerSearchActiveIndex === index ? "bg-white/[0.05]" : ""}`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-[var(--foreground)]">{item.ticker}</p>
+                          <p className="truncate text-xs text-[var(--muted)]">{item.name}</p>
+                        </div>
+                        <span className="shrink-0 text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                          {item.primaryExchange || item.market || "Stock"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-2.5 text-xs text-[var(--muted)]">No matching stocks found.</div>
+                )}
+              </div>
+            )}
+          </div>
+
           <button
             type="submit"
             className="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-[#0c0f12] hover:brightness-110 transition-all"
@@ -1194,6 +1566,9 @@ function GexHeatmapView() {
           {replayActive && snapshots[replayIndex]
             ? fmtReplayTime(snapshots[replayIndex].time)
             : new Date(data.timestamp).toLocaleTimeString()}
+        </span>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sourceClasses}`}>
+          {sourceLabel}
         </span>
       </div>
 
@@ -2985,12 +3360,26 @@ function FlowTable({ rows }: { rows: typeof mockFlowOrders }) {
   };
 
   const parseTime = (value: string) => {
-    const [md, hm] = value.split(" ");
-    if (!md || !hm) return 0;
-    const [m, d] = md.split("/").map((n) => parseInt(n, 10));
-    const [hh, mm] = hm.split(":").map((n) => parseInt(n, 10));
-    const year = new Date().getFullYear();
-    return new Date(year, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0).getTime();
+    const match = value.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+    if (!match) return 0;
+    const hoursRaw = parseInt(match[1] ?? "0", 10);
+    const minutes = parseInt(match[2] ?? "0", 10);
+    const seconds = parseInt(match[3] ?? "0", 10);
+    const meridiem = (match[4] ?? "AM").toUpperCase();
+
+    const hours24 = meridiem === "PM"
+      ? (hoursRaw % 12) + 12
+      : hoursRaw % 12;
+
+    const now = new Date();
+    return new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      hours24,
+      minutes,
+      seconds
+    ).getTime();
   };
 
   const getSigScore = (row: FlowRow) => {

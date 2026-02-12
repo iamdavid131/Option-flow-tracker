@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   try {
     /* ── 1. Stock snapshots → spot prices ── */
     const stockSnapshotUrl = `${BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers.join(",")}&apiKey=${API_KEY}`;
-    const stockRes = await fetch(stockSnapshotUrl, { next: { revalidate: 5 } });
+    const stockRes = await fetch(stockSnapshotUrl, { cache: "no-store" });
     const stockData = await stockRes.json();
 
     const spotPrices: Record<string, number> = {};
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
           `&apiKey=${API_KEY}`;
 
         try {
-          const res = await fetch(url, { next: { revalidate: 10 } });
+          const res = await fetch(url, { cache: "no-store" });
           const data = await res.json();
           return { ticker, results: data.results ?? [] };
         } catch {
@@ -78,6 +78,7 @@ export async function GET(req: NextRequest) {
     /* ── 3. Normalise into FlowOrder rows ── */
     type FlowRow = {
       time: string;
+      sortTs: number;
       ticker: string;
       strike: number;
       contractType: "call" | "put";
@@ -197,13 +198,23 @@ export async function GET(req: NextRequest) {
           : Math.max(1, Math.round(oi * (Math.abs(changePct) / 100 + 0.01)));
 
         // Timestamp from last update
-        const ts = dayData.last_updated
-          ? new Date(dayData.last_updated / 1e6)
-          : new Date();
-        const timeStr = `${pad(ts.getMonth() + 1)}/${pad(ts.getDate())} ${pad(ts.getHours())}:${pad(ts.getMinutes())}`;
+        const rawTs =
+          dayData.last_updated ??
+          snap.last_trade?.sip_timestamp ??
+          snap.last_trade?.participant_timestamp ??
+          snap.last_trade?.trf_timestamp ??
+          snap.last_quote?.last_updated ??
+          null;
+        const tsMs = normalizePolygonTs(rawTs);
+        const ts = tsMs ? new Date(tsMs) : new Date();
+        const hh24 = ts.getHours();
+        const hh12 = hh24 % 12 === 0 ? 12 : hh24 % 12;
+        const ampm = hh24 >= 12 ? "PM" : "AM";
+        const timeStr = `${pad(hh12)}:${pad(ts.getMinutes())}:${pad(ts.getSeconds())} ${ampm}`;
 
         rows.push({
           time: timeStr,
+          sortTs: ts.getTime(),
           ticker,
           strike: details.strike_price,
           contractType: details.contract_type,
@@ -223,16 +234,70 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Sort by OI descending (most active first)
+    // Sort by latest print timestamp first (tape view)
     rows.sort((a, b) => {
-      return parseNumber(b.oi) - parseNumber(a.oi);
+      return b.sortTs - a.sortTs;
     });
 
-    return NextResponse.json({
-      orders: rows.slice(0, limit),
-      spotPrices,
-      timestamp: new Date().toISOString(),
-    });
+    // Remove near-identical duplicate prints so tape is not repetitive
+    const deduped: FlowRow[] = [];
+    const seenPrints = new Set<string>();
+    for (const row of rows) {
+      const signature = [
+        row.ticker,
+        row.expiry,
+        row.contractType,
+        row.strike,
+        row.side,
+        row.price,
+        row.size,
+        row.time,
+      ].join("|");
+
+      if (seenPrints.has(signature)) continue;
+      seenPrints.add(signature);
+      deduped.push(row);
+    }
+
+    // Interleave rows by ticker for a more diversified tape experience
+    // (prevents long clusters of a single stock dominating the top list)
+    const byTicker = new Map<string, FlowRow[]>();
+    const tickerOrder: string[] = [];
+    for (const row of deduped) {
+      if (!byTicker.has(row.ticker)) {
+        byTicker.set(row.ticker, []);
+        tickerOrder.push(row.ticker);
+      }
+      byTicker.get(row.ticker)?.push(row);
+    }
+
+    const interleaved: FlowRow[] = [];
+    let hasRemaining = true;
+    while (hasRemaining) {
+      hasRemaining = false;
+      for (const ticker of tickerOrder) {
+        const queue = byTicker.get(ticker);
+        if (queue && queue.length > 0) {
+          interleaved.push(queue.shift() as FlowRow);
+          hasRemaining = true;
+        }
+      }
+    }
+
+    return NextResponse.json(
+      {
+        orders: interleaved.slice(0, limit).map(({ sortTs, ...row }) => row),
+        spotPrices,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+      }
+    );
   } catch (error) {
     console.error("Flow API error:", error);
     return NextResponse.json(
@@ -268,4 +333,15 @@ function parseNumber(str: string): number {
   if (str.endsWith("M")) return num * 1_000_000;
   if (str.endsWith("K")) return num * 1_000;
   return num;
+}
+
+function normalizePolygonTs(value: unknown): number | null {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+
+  if (num >= 1e18) return Math.round(num / 1e6); // ns → ms
+  if (num >= 1e15) return Math.round(num / 1e3); // µs → ms
+  if (num >= 1e12) return Math.round(num); // already ms
+  if (num >= 1e9) return Math.round(num * 1000); // seconds → ms
+  return null;
 }
