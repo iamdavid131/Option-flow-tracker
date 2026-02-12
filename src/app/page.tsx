@@ -953,6 +953,8 @@ function GexHeatmapView() {
   const [grokError, setGrokError] = useState<string | null>(null);
   const [popupCell, setPopupCell] = useState<{ strike: number; expiry: string; x: number; y: number } | null>(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const priceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const atmRowRef = useRef<HTMLTableRowElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const tickerSearchRef = useRef<HTMLDivElement>(null);
@@ -1042,6 +1044,43 @@ function GexHeatmapView() {
   }, [metric, saveSnapshot]);
 
   useEffect(() => { fetchGex(ticker); }, [ticker, metric, fetchGex]);
+
+  // Poll latest stock price for heatmap display
+  useEffect(() => {
+    let mounted = true;
+    const fetchPrice = async () => {
+      try {
+        const res = await fetch(`/api/stock?ticker=${encodeURIComponent(ticker)}&range=1d`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const price = typeof json.currentPrice === "number" ? json.currentPrice : Number(json.currentPrice ?? json.current_price ?? 0);
+        if (mounted && !Number.isNaN(price) && price > 0) setCurrentPrice(price);
+      } catch {
+        // ignore
+      }
+    };
+
+    // compute interval: faster during market hours
+    const getInterval = () => {
+      const now = new Date();
+      const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const h = et.getHours();
+      const m = et.getMinutes();
+      const mins = h * 60 + m;
+      const isMarketHours = mins >= 570 && mins <= 960; // 9:30 - 16:00 ET
+      return isMarketHours ? 5000 : 15000;
+    };
+
+    // initial fetch
+    fetchPrice();
+    // set interval
+    priceIntervalRef.current = setInterval(fetchPrice, getInterval());
+    return () => {
+      mounted = false;
+      if (priceIntervalRef.current) clearInterval(priceIntervalRef.current);
+      priceIntervalRef.current = null;
+    };
+  }, [ticker]);
 
   // Load persisted snapshots on mount and ticker change
   useEffect(() => {
@@ -1150,13 +1189,34 @@ function GexHeatmapView() {
   };
 
   useEffect(() => {
-    const query = tickerInput.trim().toUpperCase();
+    const query = tickerInput.trim();
+    const key = query.toUpperCase();
 
     if (query.length < 1) {
-      setTickerSearchResults([]);
-      setTickerSearchLoading(false);
-      setTickerSearchActiveIndex(-1);
-      return;
+      // Fetch a full list of local tickers when input is empty so users can browse
+      let cancelled = false;
+      const ctrl = new AbortController();
+      (async () => {
+        setTickerSearchLoading(true);
+        try {
+          const res = await fetch(`/api/stock-search?all=1`, { signal: ctrl.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          if (cancelled) return;
+          setTickerSearchResults(Array.isArray(json.results) ? json.results : []);
+          setTickerSearchActiveIndex(-1);
+        } catch (err) {
+          if ((err as Error).name === 'AbortError') return;
+          setTickerSearchResults([]);
+          setTickerSearchActiveIndex(-1);
+        } finally {
+          setTickerSearchLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+        ctrl.abort();
+      };
     }
 
     const cachedExact = tickerSearchCacheRef.current[query];
@@ -1168,12 +1228,12 @@ function GexHeatmapView() {
     }
 
     const cachedPrefix = Object.entries(tickerSearchCacheRef.current)
-      .filter(([key]) => query.startsWith(key) && key.length >= 1)
+      .filter(([k]) => key.startsWith(k) && k.length >= 1)
       .sort((a, b) => b[0].length - a[0].length)[0]?.[1];
     if (cachedPrefix && cachedPrefix.length > 0) {
       setTickerSearchResults(
         cachedPrefix
-          .filter((item) => item.ticker.toUpperCase().includes(query) || item.name.toUpperCase().includes(query))
+          .filter((item) => item.ticker.toUpperCase().includes(key) || item.name.toUpperCase().includes(key))
           .slice(0, 12)
       );
       setTickerSearchActiveIndex(-1);
@@ -1195,9 +1255,34 @@ function GexHeatmapView() {
         const results = Array.isArray(json.results)
           ? (json.results as HeatmapStockSearchResult[])
           : [];
-        tickerSearchCacheRef.current[query] = results;
+        // cache under uppercase key
+        tickerSearchCacheRef.current[key] = results;
         setTickerSearchResults(results);
         setTickerSearchActiveIndex(-1);
+
+        // Prefetch company names for the top few results when missing
+        (async () => {
+          const toPrefetch = (results || []).slice(0, 6).filter((r) => !r.name || r.name.trim() === "" || r.name === r.ticker);
+          if (toPrefetch.length === 0) return;
+          for (const r of toPrefetch) {
+            try {
+              const res = await fetch(`/api/stock?ticker=${encodeURIComponent(r.ticker)}&range=1m`);
+              if (!res.ok) continue;
+              const info = await res.json();
+              const pretty = info?.name ?? "";
+              if (pretty && pretty.trim().length > 0 && pretty !== r.ticker) {
+                setTickerSearchResults((prev) => prev.map((it) => (it.ticker === r.ticker ? { ...it, name: pretty } : it)));
+                Object.keys(tickerSearchCacheRef.current).forEach((cacheKey) => {
+                  tickerSearchCacheRef.current[cacheKey] = tickerSearchCacheRef.current[cacheKey].map((it) =>
+                    it.ticker === r.ticker ? { ...it, name: pretty } : it
+                  );
+                });
+              }
+            } catch {
+              // ignore per-item failures
+            }
+          }
+        })();
       } catch (error) {
         if ((error as Error).name === "AbortError") return;
         setTickerSearchResults([]);
@@ -1205,7 +1290,7 @@ function GexHeatmapView() {
       } finally {
         setTickerSearchLoading(false);
       }
-    }, 90);
+    }, 50);
 
     return () => {
       clearTimeout(timeout);
@@ -1458,7 +1543,7 @@ function GexHeatmapView() {
           </button>
         </form>
         <span className="text-sm font-semibold">{data.ticker}</span>
-        <span className="text-sm text-[var(--muted)]">${spotPrice.toFixed(2)}</span>
+        <span className="text-sm text-[var(--muted)]">${(currentPrice ?? spotPrice).toFixed(2)}</span>
 
         {/* ── Replay toggle ── */}
         <button
@@ -4005,7 +4090,7 @@ function OptionChainView() {
           </button>
         </form>
         <span className="text-sm font-semibold">{ticker}</span>
-        <span className="text-sm text-[var(--muted)]">${spotPrice.toFixed(2)}</span>
+        <span className="text-sm text-[var(--muted)]">${(currentPrice ?? spotPrice).toFixed(2)}</span>
       </div>
 
       {/* Expiry date tabs */}

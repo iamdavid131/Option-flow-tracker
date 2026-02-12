@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as d3 from "d3";
 import * as topojson from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
@@ -124,15 +124,35 @@ export default function WorldMapView() {
 
   // Load TopoJSON
   useEffect(() => {
+    // Try CDN first, then public fallback, finally empty features.
     fetch(WORLD_ATLAS_URL)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((topo: WorldTopology) => {
         worldDataRef.current = topo;
         const result = topojson.feature(topo, topo.objects.countries);
         featuresRef.current = "features" in result ? result.features : [result];
         setLoaded(true);
       })
-      .catch((e) => console.error("Failed to load world atlas:", e));
+      .catch(async (e) => {
+        console.warn("Failed to load world atlas CDN, trying local fallback:", e);
+        try {
+          const r = await fetch('/world-atlas-fallback.json');
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const topo: WorldTopology = await r.json();
+          worldDataRef.current = topo;
+          const result = topojson.feature(topo, topo.objects.countries);
+          featuresRef.current = "features" in result ? result.features : [result];
+          setLoaded(true);
+          return;
+        } catch (e2) {
+          console.warn('Local fallback failed, using empty features', e2);
+          featuresRef.current = [];
+          setLoaded(true);
+        }
+      });
   }, []);
 
   // Set view preset
@@ -360,6 +380,71 @@ export default function WorldMapView() {
     isDraggingRef.current = false;
   }, []);
 
+  // Left/right tile configs made stateful so users can reorder via drag/drop
+  const [leftTiles, setLeftTiles] = useState(() => [
+    { id: 'world', title: 'World / Geopolitical', feed: 'http://feeds.bbci.co.uk/news/world/rss.xml' },
+    { id: 'markets', title: 'Markets', feed: 'https://www.reuters.com/tools/rss' },
+  ]);
+  const [rightTiles, setRightTiles] = useState(() => [
+    { id: 'intel', title: 'Intel Feed', feed: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
+    { id: 'tech', title: 'Technology / AI', feed: 'https://www.theverge.com/rss/index.xml' },
+  ]);
+
+  const [selectedChannel, setSelectedChannel] = useState<{ label: string; embed?: string } | null>(null);
+
+  // Channel catalog for live embeds (prefer YouTube live streams where possible)
+  const CHANNELS: { id: string; label: string; embed?: string; url?: string }[] = [
+    { id: 'bloomberg', label: 'Bloomberg', embed: 'https://www.youtube.com/embed/live_stream?channel=UCIALMKvObZNtJ6AmdCLP7Lg', url: 'https://www.bloomberg.com' },
+    { id: 'bbc', label: 'BBC', embed: 'https://www.youtube.com/embed/live_stream?channel=UC16niRr50-MSBwiO3YDb3RA', url: 'https://www.bbc.co.uk/news' },
+    { id: 'cnbc', label: 'CNBC', embed: 'https://www.youtube.com/embed/live_stream?channel=UCu9D6-2kUnGAr7QG2f9Y7XA', url: 'https://www.cnbc.com' },
+    { id: 'france24', label: 'France24', embed: 'https://www.youtube.com/embed/live_stream?channel=UCSfJfZ6f2z9v6r7M7k9Q0Vw', url: 'https://www.france24.com/en/' },
+    { id: 'sky', label: 'Sky News', embed: 'https://www.youtube.com/embed/live_stream?channel=UCUK0HBIBWgM2c4vsPhG8Q7A', url: 'https://news.sky.com' },
+    { id: 'msnbc', label: 'MSNBC', url: 'https://www.msnbc.com' },
+    { id: 'cnn', label: 'CNN', url: 'https://www.cnn.com' },
+  ];
+
+  // Load saved selection from localStorage
+  useEffect(() => {
+    try {
+      const id = window.localStorage.getItem('wm:selectedChannel');
+      if (id) {
+        const c = CHANNELS.find((ch) => ch.id === id);
+        if (c) setSelectedChannel({ label: c.label, embed: c.embed });
+      }
+    } catch {}
+  }, []);
+
+  // Drag state
+  const dragInfo = useRef<{ from: 'left' | 'right'; index: number } | null>(null);
+
+  const onDragStartTile = (side: 'left' | 'right', index: number) => (e: React.DragEvent) => {
+    dragInfo.current = { from: side, index };
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const onDropTile = (side: 'left' | 'right', toIndex: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const info = dragInfo.current;
+    if (!info) return;
+    if (info.from === side) {
+      const arr = side === 'left' ? [...leftTiles] : [...rightTiles];
+      const [item] = arr.splice(info.index, 1);
+      arr.splice(toIndex, 0, item);
+      side === 'left' ? setLeftTiles(arr) : setRightTiles(arr);
+    } else {
+      // move across sides
+      const fromArr = info.from === 'left' ? [...leftTiles] : [...rightTiles];
+      const toArr = side === 'left' ? [...leftTiles] : [...rightTiles];
+      const [item] = fromArr.splice(info.index, 1);
+      toArr.splice(toIndex, 0, item);
+      if (info.from === 'left') setLeftTiles(fromArr); else setRightTiles(fromArr);
+      if (side === 'left') setLeftTiles(toArr); else setRightTiles(toArr);
+    }
+    dragInfo.current = null;
+  };
+
+  const [muted, setMuted] = useState<boolean>(true);
+
   return (
     <div className="wm-container">
       {/* Header bar */}
@@ -402,16 +487,17 @@ export default function WorldMapView() {
         </div>
       </div>
 
-      {/* Map canvas */}
-      <div
-        ref={containerRef}
-        className="wm-canvas"
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      >
+      {/* Map (full width) */}
+      <div className="wm-main">
+        <div
+          ref={containerRef}
+          className="wm-canvas"
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
         {!loaded && (
           <div className="wm-loading">
             <div className="wm-spinner" />
@@ -419,7 +505,100 @@ export default function WorldMapView() {
           </div>
         )}
         <svg ref={svgRef} className="wm-svg" />
-        <div ref={overlaysRef} className="wm-overlays" />
+          <div ref={overlaysRef} className="wm-overlays" />
+        </div>
+
+        {/* Bottom row: live feed + KPI + tiles */}
+        <div className="wm-bottom">
+          <div className="wm-bottom-left">
+            <div className="live-panel">
+              <div className="live-header">
+                <span className="live-title">LIVE NEWS</span>
+                <span className="live-badge">LIVE</span>
+              </div>
+                <div className="live-body">
+                  <div className="live-controls">
+                    <button className="live-channel" onClick={() => setMuted((m) => !m)}>{muted ? 'Unmute' : 'Mute'}</button>
+                    <div style={{ color: '#94a3b8', fontSize: 12 }}>{selectedChannel?.label ?? 'No channel selected'}</div>
+                  </div>
+                  <div className="live-box">
+                    {selectedChannel && selectedChannel.embed ? (
+                      <iframe
+                        src={(() => {
+                          const base = selectedChannel.embed;
+                          const sep = base.includes('?') ? '&' : '?';
+                          return `${base}${sep}autoplay=1${muted ? '&mute=1' : ''}`;
+                        })()}
+                        title={selectedChannel.label}
+                        frameBorder={0}
+                        allow="autoplay; encrypted-media; picture-in-picture"
+                        allowFullScreen
+                        style={{ width: '100%', height: '100%' }}
+                      />
+                    ) : (
+                      <div className="live-placeholder">Select a channel below to embed (or open in new tab)</div>
+                    )}
+                  </div>
+                  <div className="live-channels">
+                  {CHANNELS.map((c) => (
+                    <div key={c.id} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <button
+                        className={`live-channel ${selectedChannel?.label === c.label ? 'active' : ''}`}
+                        onClick={() => {
+                          setSelectedChannel({ label: c.label, embed: c.embed });
+                          try { window.localStorage.setItem('wm:selectedChannel', c.id); } catch {}
+                        }}
+                      >
+                        {c.label}
+                      </button>
+                      {c.embed ? (
+                        <button
+                          className="live-channel small"
+                          title={`Open ${c.label} in new tab`}
+                          onClick={() => window.open(c.embed, '_blank')}
+                        >⤢</button>
+                      ) : c.url ? (
+                        <a className="live-channel small" href={c.url} target="_blank" rel="noreferrer">↗</a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="wm-bottom-center">
+            <div className="kpi-row">
+              <KpiTile ticker="VIX" label="VIX" />
+              <KpiTile ticker="CL=F" label="Oil" />
+              <KpiTile ticker="GC=F" label="Gold" />
+            </div>
+            <div className="tiles-grid">
+              <div className="tiles-column">
+                {leftTiles.map((t, i) => (
+                  <div key={t.id} draggable onDragStart={onDragStartTile('left', i)} onDragOver={(e)=>e.preventDefault()} onDrop={onDropTile('left', i)}>
+                    <NewsTile title={t.title} feedUrl={t.feed} />
+                  </div>
+                ))}
+              </div>
+              <div className="tiles-column">
+                {rightTiles.map((t, i) => (
+                  <div key={t.id} draggable onDragStart={onDragStartTile('right', i)} onDragOver={(e)=>e.preventDefault()} onDrop={onDropTile('right', i)}>
+                    <NewsTile title={t.title} feedUrl={t.feed} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="wm-bottom-right">
+            {/* Right column can house additional compact widgets */}
+            <div className="news-tile">
+              <div className="news-tile-header">Country Instability Index</div>
+              <div className="news-tile-body">Coming soon</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Legend */}
@@ -476,6 +655,76 @@ export default function WorldMapView() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------- KPI Tile component (small live price) ---------- */
+function KpiTile({ ticker, label }: { ticker: string; label?: string }) {
+  const [value, setValue] = useState<string>('...');
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/stock?ticker=${encodeURIComponent(ticker)}&range=1d`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!mounted) return;
+        const v = json.currentPrice ?? (json.last && json.last.close) ?? json.results?.[0]?.price;
+        setValue(typeof v === 'number' ? v.toFixed(2) : String(v ?? 'n/a'));
+      } catch {
+        if (mounted) setValue('n/a');
+      }
+    })();
+    return () => { mounted = false; };
+  }, [ticker]);
+
+  return (
+    <div className="kpi-tile">
+      <div className="kpi-label">{label ?? ticker}</div>
+      <div className="kpi-value">{value}</div>
+    </div>
+  );
+}
+
+/* ---------- Small News Tile component ---------- */
+function NewsTile({ title, feedUrl }: { title: string; feedUrl: string }) {
+  const [items, setItems] = useState<{ title: string; link: string }[]>([]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/rss?url=${encodeURIComponent(feedUrl)}`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!mounted) return;
+        const its = Array.isArray(json.items) ? json.items.slice(0, 3) : [];
+        setItems(its.map((i: any) => ({ title: i.title, link: i.link })));
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { mounted = false; };
+  }, [feedUrl]);
+
+  return (
+    <div className="news-tile">
+      <div className="news-tile-header">
+        <span>{title}</span>
+      </div>
+      <div className="news-tile-body">
+        {items.length === 0 ? (
+          <div className="news-loading">Loading…</div>
+        ) : (
+          items.map((it, idx) => (
+            <a key={idx} href={it.link} target="_blank" rel="noreferrer" className="news-item">
+              {it.title}
+            </a>
+          ))
+        )}
+      </div>
     </div>
   );
 }
