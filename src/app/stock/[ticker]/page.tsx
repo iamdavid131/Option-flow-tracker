@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import NewsLive from '../../../components/NewsLive';
 
 /* ================================================================
    TYPES
@@ -114,6 +115,7 @@ const TABS = [
   { id: "overview", label: "Overview" },
   { id: "financials", label: "Financials" },
   { id: "statistics", label: "Key Stats" },
+  { id: "short-interest", label: "Short Interest" },
   { id: "news", label: "News" },
   { id: "profile", label: "Profile" },
 ] as const;
@@ -299,6 +301,9 @@ export default function StockProfilePage() {
         {activeTab === "statistics" && (
           <StatisticsTab data={data} fmtBig={fmtBig} fmtVol={fmtVol} />
         )}
+        {activeTab === "short-interest" && (
+          <ShortInterestTab ticker={ticker} fmtBig={fmtBig} />
+        )}
         {activeTab === "news" && <NewsTab news={data.news} />}
         {activeTab === "profile" && (
           <ProfileTab data={data} fmtBig={fmtBig} exchangeName={exchangeName} />
@@ -476,7 +481,7 @@ function FinancialsTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<"annual" | "quarterly">("annual");
-  const [statement, setStatement] = useState<"income" | "balance" | "cashflow">("income");
+  const [statement, setStatement] = useState<"income" | "balance" | "cashflow" | "ratios" | "tenk">("income");
 
   const fetchFinancials = useCallback(
     async (tf: "annual" | "quarterly") => {
@@ -499,6 +504,57 @@ function FinancialsTab({
   useEffect(() => {
     fetchFinancials(timeframe);
   }, [timeframe, fetchFinancials]);
+
+  // 10-K fetch state
+  const [tenkLoading, setTenkLoading] = useState(false);
+  const [tenkError, setTenkError] = useState<string | null>(null);
+  const [tenkData, setTenkData] = useState<any | null>(null);
+
+  // Ratios state
+  const [ratiosLoading, setRatiosLoading] = useState(false);
+  const [ratiosError, setRatiosError] = useState<string | null>(null);
+  const [ratiosData, setRatiosData] = useState<any | null>(null);
+
+  const fetch10K = useCallback(async () => {
+    setTenkLoading(true);
+    setTenkError(null);
+    setTenkData(null);
+    try {
+      const res = await fetch(`/api/financials/10k?ticker=${ticker}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setTenkData(json);
+    } catch (err) {
+      setTenkError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTenkLoading(false);
+    }
+  }, [ticker]);
+
+  const fetchRatios = useCallback(async () => {
+    setRatiosLoading(true);
+    setRatiosError(null);
+    setRatiosData(null);
+    try {
+      const res = await fetch(`/api/financials/ratios?ticker=${ticker}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setRatiosData(json);
+    } catch (err) {
+      setRatiosError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRatiosLoading(false);
+    }
+  }, [ticker]);
+
+  // Clear 10-K state when switching away from the 10-K view
+  useEffect(() => {
+    if (statement !== 'tenk') {
+      setTenkData(null);
+      setTenkError(null);
+      setTenkLoading(false);
+    }
+  }, [statement]);
 
   const fmtFin = (n: number | null) => {
     if (n == null) return "—";
@@ -596,6 +652,30 @@ function FinancialsTab({
               {s.label}
             </button>
           ))}
+
+          {/* Ratios button between Cash Flow and 10-K */}
+          <button
+            type="button"
+            onClick={() => { setStatement('ratios'); setRatiosLoading(true); fetchRatios(); }}
+            className={`rounded-lg px-4 py-1.5 text-xs font-medium transition-all ${
+              statement === 'ratios'
+                ? "bg-[var(--accent)] text-[#0c0f12] shadow-lg shadow-[var(--accent)]/20"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            Ratios
+          </button>
+          {/* 10-K button placed immediately after statement tabs */}
+          <button
+            type="button"
+            onClick={() => { setStatement('tenk'); setTenkLoading(true); fetch10K(); }}
+            id="btn-10k-inline"
+            data-testid="btn-10k-inline"
+            className="ml-2 rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--muted)] hover:text-[var(--foreground)]"
+            title="Fetch 10-K filings"
+          >
+            10-K
+          </button>
         </div>
 
         {/* Annual / Quarterly toggle */}
@@ -619,73 +699,316 @@ function FinancialsTab({
         </div>
       </div>
 
-      {/* Title */}
-      <h2 className="mb-1 text-xl font-bold">
-        {ticker}{" "}
-        {statement === "income" ? "Income Statement" : statement === "balance" ? "Balance Sheet" : "Cash Flow Statement"}
-      </h2>
-      <p className="mb-4 text-xs text-[var(--muted)]">Financials in USD. {timeframe === "annual" ? "Annual" : "Quarterly"} data.</p>
+      {/* Title: show Financials Ratios when viewing ratios; hide main title for 10-K */}
+      {statement === 'ratios' ? (
+        <>
+          <h2 className="mb-1 text-2xl font-bold">Financials Ratios</h2>
+          <p className="mb-4 text-xs text-[var(--muted)]">Ratios for {ticker}.</p>
+        </>
+      ) : statement !== 'tenk' && (
+        <>
+          <h2 className="mb-1 text-xl font-bold">
+            {ticker} {" "}
+            {statement === "income" ? "Income Statement" : statement === "balance" ? "Balance Sheet" : "Cash Flow Statement"}
+          </h2>
+          <p className="mb-4 text-xs text-[var(--muted)]">Financials in USD. {timeframe === "annual" ? "Annual" : "Quarterly"} data.</p>
+        </>
+      )}
 
-      {/* Table */}
-      {periods.length === 0 ? (
-        <p className="py-8 text-center text-[var(--muted)]">
-          No financial data available for {ticker}.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
-                <th className="sticky left-0 z-10 bg-[var(--panel-2)] px-4 py-3 text-left font-medium min-w-[200px]">
-                  {timeframe === "annual" ? "FISCAL YEAR" : "QUARTER"}
-                </th>
-                {periods.map((p) => (
-                  <th key={`${p.fiscalPeriod}-${p.fiscalYear}`} className="px-4 py-3 text-right font-medium min-w-[120px]">
-                    {p.fiscalPeriod === "FY" ? `FY ${p.fiscalYear}` : `${p.fiscalPeriod} FY${p.fiscalYear}`}
-                  </th>
-                ))}
-              </tr>
-              <tr className="border-b border-[var(--border)] text-[10px] text-[var(--muted)]">
-                <th className="sticky left-0 z-10 bg-[var(--panel)] px-4 py-2 text-left font-normal">
-                  PERIOD ENDING
-                </th>
-                {periods.map((p) => (
-                  <th key={`end-${p.fiscalPeriod}-${p.fiscalYear}`} className="px-4 py-2 text-right font-normal">
-                    {new Date(p.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={row.key}
-                  className={`border-b border-[var(--border)] transition-colors hover:bg-white/[0.02] ${
-                    row.highlight ? "bg-white/[0.01]" : ""
-                  }`}
-                >
-                  <td className={`sticky left-0 z-10 bg-[var(--panel)] px-4 py-3 ${row.highlight ? "font-semibold text-[var(--foreground)]" : "text-[var(--muted)]"}`}>
-                    {row.label}
-                  </td>
-                  {periods.map((p) => {
-                    const val = p[row.key] as number | null;
-                    const isNeg = val != null && val < 0;
-                    return (
-                      <td
-                        key={`${row.key}-${p.fiscalPeriod}-${p.fiscalYear}`}
-                        className={`px-4 py-3 text-right tabular-nums ${
-                          row.highlight ? "font-semibold" : ""
-                        } ${isNeg ? "text-[var(--danger)]" : ""}`}
-                      >
-                        {fmtFin(val)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Visual indicator for 10-K view: large heading + subtitle */}
+      {statement === 'tenk' && (
+        <div className="mb-4">
+          <h2 className="mb-1 text-2xl font-bold">{ticker} 10-K Sections</h2>
+          <p className="mb-3 text-sm text-[var(--muted)]">Browse filings and extracted 10‑K sections for {ticker}.</p>
         </div>
+      )}
+
+      {/* 10-K results panel (renders when available) */}
+      {statement === 'tenk' && (
+      <div id="tenk-panel" className="mt-3">
+        {tenkLoading && (
+          <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+            Fetching 10-K sections...
+          </div>
+        )}
+        {tenkError && (
+          <div className="rounded-md border border-[var(--danger)] bg-[var(--panel)] p-3 text-sm text-[var(--danger)]">
+            Failed to fetch 10-K: {tenkError}
+          </div>
+        )}
+        {tenkData && (
+          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-md font-semibold">10-K Sections</h3>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--muted)]">Source: {tenkData.source ?? 'N/A'}</span>
+                <button
+                  onClick={() => { setTenkData(null); setTenkError(null); }}
+                  className="rounded-lg px-3 py-1 text-xs font-medium text-[var(--muted)] hover:text-[var(--foreground)]"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {/* Show pagination / next URL when available from Massive */}
+            {(() => {
+              const payload = tenkData.data ?? tenkData;
+              const next = payload?.next_url ?? payload?.nextUrl ?? payload?.next;
+              if (!next) return null;
+              return (
+                <div className="mb-3 text-sm">
+                  <a href={next} target="_blank" rel="noreferrer" className="text-[var(--accent-2)] hover:underline">More 10-K sections</a>
+                </div>
+              );
+            })()}
+
+            {/* Heuristic: extract array of sections/filings from returned payload */}
+            {(() => {
+              const payload = tenkData.data ?? tenkData;
+              let items: any[] = [];
+              if (Array.isArray(payload)) items = payload;
+              else if (Array.isArray(payload.results)) items = payload.results;
+              else if (Array.isArray(payload.items)) items = payload.items;
+              else if (Array.isArray(payload.sections)) items = payload.sections;
+              else if (payload.filings && Array.isArray(payload.filings)) items = payload.filings;
+              else if (payload.data && Array.isArray(payload.data)) items = payload.data;
+
+              if (!items || items.length === 0) {
+                return <div className="text-sm text-[var(--muted)]">No 10-K sections found for this ticker.</div>;
+              }
+
+              // Render table using Financials table styles
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                        <th className="sticky left-0 z-10 bg-[var(--panel-2)] px-4 py-3 text-left font-medium min-w-[180px]">Filing / Period</th>
+                        <th className="px-4 py-3 text-left font-medium min-w-[220px]">Section</th>
+                        <th className="px-4 py-3 text-left font-medium">Snippet</th>
+                        <th className="px-4 py-3 text-left font-medium">Link</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.slice(0, 30).map((it: any, i: number) => {
+                        const filingDate = it.filing_date ?? it.filingDate ?? it.date ?? null;
+                        const periodEnd = it.period_end ?? it.periodEnd ?? it.period ?? null;
+                        const titleRaw = it.section_title ?? it.title ?? it.name ?? it.section ?? 'Section';
+                        // normalize titles like "risk_factors" -> "Risk Factors"
+                        const title = String(titleRaw).replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+                        const snippet = (it.section_text ?? it.text ?? it.snippet ?? it.summary) || '';
+                        const link = it.filing_url ?? it.document_link ?? it.url ?? it.link ?? it.accession_url ?? it.pdf_url ?? null;
+                        return (
+                          <tr key={i} className={`border-b border-[var(--border)] transition-colors hover:bg-white/[0.02]`}>
+                            <td className={`sticky left-0 z-10 bg-[var(--panel)] px-4 py-3 text-sm ${snippet ? 'font-medium' : 'text-[var(--muted)]'}`}>
+                              <div className="whitespace-nowrap">{filingDate ? new Date(filingDate).toLocaleDateString() : '—'}</div>
+                              <div className="text-xs text-[var(--muted)]">{periodEnd ? `Period: ${new Date(periodEnd).toLocaleDateString()}` : ''}</div>
+                            </td>
+                            <td className="px-4 py-3 text-sm font-medium">{title}</td>
+                            <td className="px-4 py-3 text-sm text-[var(--muted)] max-w-[60ch] truncate">{snippet || '—'}</td>
+                            <td className="px-4 py-3 text-sm">
+                              {link ? (
+                                <a href={link} target="_blank" rel="noreferrer" className="text-[var(--accent-2)] hover:underline">View</a>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
+      )}
+      {statement === 'ratios' && (
+        <div id="ratios-panel" className="mt-3">
+          {ratiosLoading && (
+            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+              Fetching Ratios...
+            </div>
+          )}
+          {ratiosError && (
+            <div className="rounded-md border border-[var(--danger)] bg-[var(--panel)] p-3 text-sm text-[var(--danger)]">
+              Failed to fetch ratios: {ratiosError}
+            </div>
+          )}
+          {ratiosData && (
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-md font-semibold">Ratios</h3>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-[var(--muted)]">Source: {ratiosData.source ?? 'N/A'}</span>
+                  <button
+                    onClick={() => { setRatiosData(null); setRatiosError(null); setStatement('income'); }}
+                    className="rounded-lg px-3 py-1 text-xs font-medium text-[var(--muted)] hover:text-[var(--foreground)]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              {(() => {
+                const payload = ratiosData.data ?? ratiosData;
+                let items: any[] = [];
+                if (Array.isArray(payload)) items = payload;
+                else if (Array.isArray(payload.results)) items = payload.results;
+                else if (Array.isArray(payload.items)) items = payload.items;
+                else if (payload.data && Array.isArray(payload.data)) items = payload.data;
+
+                if (!items || items.length === 0) {
+                  return <div className="text-sm text-[var(--muted)]">No ratios found for this ticker.</div>;
+                }
+
+                // If the API returns a single object with many metric keys (company-level),
+                // render a simple two-column Metric / Value table matching your sample.
+                if (items.length === 1 && typeof items[0] === 'object') {
+                  const obj = items[0];
+                  const keys = Object.keys(obj).filter((k) => k !== 'ticker');
+                  const formatValue = (v: any) => {
+                    if (v == null) return '—';
+                    if (typeof v === 'number') {
+                      const abs = Math.abs(v);
+                      if (abs >= 1e9) return fmtBig(v);
+                      if (abs >= 1e6) return fmtBig(v);
+                      if (Math.abs(v) >= 1000) return fmtBig(v);
+                      if (Math.abs(v) < 1 && Math.abs(v) > 0) return v.toString();
+                      if (Number.isInteger(v)) return v.toLocaleString();
+                      return v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+                    }
+                    return String(v);
+                  };
+
+                  return (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[13px]">
+                        <tbody>
+                          {keys.map((k) => (
+                            <tr key={k} className="border-b border-[var(--border)]">
+                              <td className="px-4 py-3 text-sm text-[var(--muted)] font-medium" style={{width: '40%'}}>
+                                {k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                              </td>
+                              <td className="px-4 py-3 text-sm tabular-nums">{formatValue(obj[k])}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                }
+
+                // Fallback: treat as an array of ratio items (period, name, value)
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                          <th className="px-4 py-3 text-left font-medium">Period</th>
+                          <th className="px-4 py-3 text-left font-medium">Ratio</th>
+                          <th className="px-4 py-3 text-right font-medium">Value</th>
+                          <th className="px-4 py-3 text-left font-medium">Link</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.slice(0, 100).map((it: any, i: number) => {
+                          const period = it.period_end ?? it.periodEnd ?? it.period ?? it.date ?? null;
+                          const name = it.ratio ?? it.name ?? it.ratio_name ?? it.metric ?? 'Ratio';
+                          const value = it.value ?? it.ratio_value ?? it.metricValue ?? it.val ?? null;
+                          const link = it.url ?? it.link ?? it.filing_url ?? null;
+                          return (
+                            <tr key={i} className={`border-b border-[var(--border)] transition-colors hover:bg-white/[0.02]`}>
+                              <td className="px-4 py-3 text-sm">{period ? new Date(period).toLocaleDateString() : '—'}</td>
+                              <td className="px-4 py-3 text-sm font-medium">{String(name)}</td>
+                              <td className="px-4 py-3 text-sm text-right tabular-nums">{value != null ? String(value) : '—'}</td>
+                              <td className="px-4 py-3 text-sm">{link ? <a href={link} target="_blank" rel="noreferrer" className="text-[var(--accent-2)] hover:underline">View</a> : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Table: hide when viewing 10-K or Ratios (ratios has its own view) */}
+      {statement !== 'tenk' && statement !== 'ratios' && (
+        periods.length === 0 ? (
+          <p className="py-8 text-center text-[var(--muted)]">
+            No financial data available for {ticker}.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                  <th className="sticky left-0 z-10 bg-[var(--panel-2)] px-4 py-3 text-left font-medium min-w-[200px]">
+                    {timeframe === "annual" ? "FISCAL YEAR" : "QUARTER"}
+                  </th>
+                  {periods.map((p) => (
+                    <th key={`${p.fiscalPeriod}-${p.fiscalYear}`} className="px-4 py-3 text-right font-medium min-w-[120px]">
+                      {p.fiscalPeriod === "FY" ? `FY ${p.fiscalYear}` : `${p.fiscalPeriod} FY${p.fiscalYear}`}
+                    </th>
+                  ))}
+                </tr>
+                <tr className="border-b border-[var(--border)] text-[10px] text-[var(--muted)]">
+                  <th className="sticky left-0 z-10 bg-[var(--panel)] px-4 py-2 text-left font-normal">
+                    PERIOD ENDING
+                  </th>
+                  {periods.map((p) => (
+                    <th key={`end-${p.fiscalPeriod}-${p.fiscalYear}`} className="px-4 py-2 text-right font-normal">
+                      {new Date(p.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className={`border-b border-[var(--border)] transition-colors hover:bg-white/[0.02] ${
+                      row.highlight ? "bg-white/[0.01]" : ""
+                    }`}
+                  >
+                    <td className={`sticky left-0 z-10 bg-[var(--panel)] px-4 py-3 ${row.highlight ? "font-semibold text-[var(--foreground)]" : "text-[var(--muted)]"}`}>
+                      {row.label}
+                    </td>
+                    {periods.map((p) => {
+                      const val = p[row.key] as number | null;
+                      const isNeg = val != null && val < 0;
+                      return (
+                        <td
+                          key={`${row.key}-${p.fiscalPeriod}-${p.fiscalYear}`}
+                          className={`px-4 py-3 text-right tabular-nums ${
+                            row.highlight ? "font-semibold" : ""
+                          } ${isNeg ? "text-[var(--danger)]" : ""}`}
+                        >
+                          {fmtFin(val)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
     </div>
   );
@@ -782,27 +1105,198 @@ function StatisticsTab({
 }
 
 /* ================================================================
-   NEWS TAB
+   SHORT INTEREST TAB
    ================================================================ */
-function NewsTab({ news }: { news: NewsItem[] }) {
-  if (news.length === 0) {
-    return (
-      <div className="py-12 text-center text-[var(--muted)]">
-        No news available.
-      </div>
-    );
-  }
+function ShortInterestTab({ ticker, fmtBig }: { ticker: string; fmtBig: (n: number | null) => string }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [shortVolLoading, setShortVolLoading] = useState(false);
+  const [shortVolItems, setShortVolItems] = useState<any[]>([]);
+
+  const fetchShort = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/short-interest?ticker=${encodeURIComponent(ticker)}&limit=100`);
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      const json = await res.json();
+      const payload = json.data ?? json.results ?? json;
+      let arr: any[] = [];
+      if (Array.isArray(payload)) arr = payload;
+      else if (Array.isArray(payload.results)) arr = payload.results;
+      setItems(arr);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [ticker]);
+
+  const fetchShortVolume = useCallback(async () => {
+    setShortVolLoading(true);
+    try {
+      const res = await fetch(`/api/short-volume?ticker=${encodeURIComponent(ticker)}&limit=100`);
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      const json = await res.json();
+      const payload = json.data ?? json.results ?? json;
+      let arr: any[] = [];
+      if (Array.isArray(payload)) arr = payload;
+      else if (Array.isArray(payload.results)) arr = payload.results;
+      setShortVolItems(arr);
+    } catch (err) {
+      // non-fatal: store empty and allow UI to show — log to console
+      console.warn('short-volume fetch failed', err);
+      setShortVolItems([]);
+    } finally {
+      setShortVolLoading(false);
+    }
+  }, [ticker]);
+
+  useEffect(() => { fetchShort(); fetchShortVolume(); }, [fetchShort, fetchShortVolume]);
+
+  // helper to normalize various incoming date formats to YYYY-MM-DD
+  const normalizeDateKey = (v: any): string | null => {
+    if (v === null || v === undefined) return null;
+    try {
+      if (typeof v === 'number') {
+        const d = new Date(v);
+        if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      }
+      const s = String(v).trim();
+      // try Date constructor (handles ISO and common formats like MM/DD/YYYY)
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      // try YYYYMMDD
+      const m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+      if (m) return new Date(`${m[1]}-${m[2]}-${m[3]}`).toISOString().slice(0, 10);
+    } catch (e) {
+      // fallthrough
+    }
+    return null;
+  };
+
+  if (loading) return <div className="flex items-center justify-center py-12 text-[var(--muted)]">Loading short interest...</div>;
+  if (error) return <div className="py-8 text-center text-[var(--danger)]">Failed to load short interest: {error}</div>;
+
+  // compute top boxes using most recent two entries
+  const latest = items && items.length > 0 ? items[0] : null;
+  const prior = items && items.length > 1 ? items[1] : null;
+  const currentShort = latest ? latest.short_interest ?? latest.shortInterest ?? null : null;
+  const priorShort = prior ? prior.short_interest ?? prior.shortInterest ?? null : null;
+  const daysToCover = latest ? latest.days_to_cover ?? latest.daysToCover ?? null : null;
+  const avgVol = latest ? latest.avg_daily_volume ?? latest.avgDailyVolume ?? latest.avg_daily_volume ?? null : null;
+
+  // find the best matching short-volume record for the latest short-interest date
+  const latestDateKey = normalizeDateKey(latest?.settlement_date ?? latest?.settlementDate ?? latest?.date ?? latest?.effective_date ?? latest?.effectiveDate);
+  const latestShortVolMatch = latestDateKey
+    ? shortVolItems.find((s) => normalizeDateKey(s.settlement_date ?? s.settlementDate ?? s.date ?? s.effective_date ?? s.effectiveDate) === latestDateKey)
+    : undefined;
+
+  const pctChange = (currentShort != null && priorShort != null && priorShort !== 0)
+    ? ((currentShort - priorShort) / Math.abs(priorShort)) * 100
+    : null;
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-      <h3 className="mb-4 text-lg font-semibold">News</h3>
-      <div className="space-y-4">
-        {news.map((article, i) => (
-          <NewsCard key={i} article={article} />
-        ))}
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+        <h3 className="mb-4 text-lg font-semibold">Short Interest</h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-3">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-xs text-[var(--muted)]">Short Interest</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums">{currentShort != null ? fmtBig(currentShort) : '—'}</div>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-xs text-[var(--muted)]">Short Prior Period</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums">{priorShort != null ? fmtBig(priorShort) : '—'}</div>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-xs text-[var(--muted)]">% Change MoM</div>
+            <div className={`mt-2 text-2xl font-bold tabular-nums ${pctChange != null ? (pctChange >= 0 ? 'text-[var(--accent)]' : 'text-[var(--danger)]') : ''}`}>{pctChange != null ? `${pctChange.toFixed(2)}%` : '—'}</div>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-xs text-[var(--muted)]">Short Volume</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums">{
+              (() => {
+                const topVal = latestShortVolMatch
+                  ? (latestShortVolMatch.short_volume ?? latestShortVolMatch.shortVolume ?? null)
+                  : (shortVolItems && shortVolItems.length > 0 ? (shortVolItems[0].short_volume ?? shortVolItems[0].shortVolume ?? null) : null);
+                return topVal != null ? fmtBig(topVal) : '—';
+              })()
+            }</div>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-xs text-[var(--muted)]">Avg Daily Volume</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums">{avgVol != null ? fmtBig(avgVol) : '—'}</div>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-xs text-[var(--muted)]">Days To Cover</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums">{daysToCover != null ? String(daysToCover) : '—'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-md font-semibold">History</h3>
+          <div className="text-sm text-[var(--muted)]">Showing {items.length} records</div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-[var(--border)] bg-[var(--panel-2)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                <th className="px-4 py-3 text-left font-medium">Date</th>
+                <th className="px-4 py-3 text-right font-medium">Short Interest</th>
+                <th className="px-4 py-3 text-right font-medium">Short Volume</th>
+                <th className="px-4 py-3 text-right font-medium">Avg Daily Volume</th>
+                <th className="px-4 py-3 text-right font-medium">Days To Cover</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it: any, i: number) => (
+                <tr key={i} className="border-b border-[var(--border)] hover:bg-white/[0.02]">
+                  <td className="px-4 py-3 text-sm">{it.settlement_date ? new Date(it.settlement_date).toLocaleDateString() : it.settlement_date ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm text-right tabular-nums">{it.short_interest != null ? fmtBig(it.short_interest) : (it.shortInterest != null ? fmtBig(it.shortInterest) : '—')}</td>
+                  <td className="px-4 py-3 text-sm text-right tabular-nums">{
+                    (() => {
+                      const inlineVal = it.short_volume ?? it.shortVolume;
+                      if (inlineVal != null) return fmtBig(inlineVal);
+                      const itKey = normalizeDateKey(it.settlement_date ?? it.settlementDate ?? it.date ?? it.effective_date ?? it.effectiveDate);
+                      if (!itKey) return '—';
+                      const match = shortVolItems.find((s) => normalizeDateKey(s.settlement_date ?? s.settlementDate ?? s.date ?? s.effective_date ?? s.effectiveDate) === itKey);
+                      return match ? fmtBig(match.short_volume ?? match.shortVolume) : '—';
+                    })()
+                  }</td>
+                  <td className="px-4 py-3 text-sm text-right tabular-nums">{(it.avg_daily_volume ?? it.avgDailyVolume) != null ? fmtBig(it.avg_daily_volume ?? it.avgDailyVolume) : '—'}</td>
+                  <td className="px-4 py-3 text-sm text-right">{it.days_to_cover != null ? String(it.days_to_cover) : (it.daysToCover != null ? String(it.daysToCover) : '—')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
+}
+
+/* ================================================================
+   NEWS TAB
+   ================================================================ */
+function NewsTab({ news }: { news: NewsItem[] }) {
+  // Render live news component which polls the API
+  const params = useParams();
+  const rawTicker = params?.ticker;
+  const ticker = (Array.isArray(rawTicker) ? rawTicker[0] ?? '' : rawTicker ?? '').toUpperCase();
+  return <NewsLive ticker={ticker} />;
 }
 
 /* ================================================================

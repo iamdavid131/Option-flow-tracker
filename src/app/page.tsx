@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
+const Tesseract3D = dynamic(() => import("@/components/Tesseract3D"), { ssr: false });
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { mockFlowOrders, mockDarkPoolTrades } from "@/lib/mock-data";
 import { useFlowData, useDarkPoolData } from "@/lib/hooks";
@@ -861,7 +862,7 @@ export default function Home() {
               Fetching live data...
             </div>
           ) : activeTab === "flow" ? (
-            <FlowTable rows={filteredFlows} />
+            <FlowTable rows={filteredFlows} isLive={liveOrders.length > 0} />
           ) : activeTab === "heatmap" ? (
             <GexHeatmapView />
           ) : activeTab === "journal" ? (
@@ -953,6 +954,7 @@ function GexHeatmapView() {
   const [grokError, setGrokError] = useState<string | null>(null);
   const [popupCell, setPopupCell] = useState<{ strike: number; expiry: string; x: number; y: number } | null>(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [tesseractOpen, setTesseractOpen] = useState(false);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const priceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const atmRowRef = useRef<HTMLTableRowElement>(null);
@@ -976,7 +978,12 @@ function GexHeatmapView() {
   const [replayActive, setReplayActive] = useState(false);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [replayIndex, setReplayIndex] = useState(0);
+  const [replayStart, setReplayStart] = useState(0);
+  const [replayEnd, setReplayEnd] = useState(0);
+  const [replaySpeed, setReplaySpeed] = useState(1); // 1x default (base 1500ms)
   const [snapshotsLoaded, setSnapshotsLoaded] = useState(false);
+  const [tessMode, setTessMode] = useState<"surface" | "wire" | "points">("surface");
+  const [tessDecimation, setTessDecimation] = useState<number>(1);
   const snapshotIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1120,20 +1127,29 @@ function GexHeatmapView() {
   // Replay playback timer
   useEffect(() => {
     if (replayPlaying && snapshots.length > 1) {
+      const baseMs = 1500;
+      const intervalMs = Math.max(100, Math.floor(baseMs / Math.max(0.01, replaySpeed)));
       playIntervalRef.current = setInterval(() => {
         setReplayIndex((prev) => {
-          if (prev >= snapshots.length - 1) {
+          if (prev >= Math.min(replayEnd || snapshots.length - 1, snapshots.length - 1)) {
             setReplayPlaying(false);
             return prev;
           }
-          return prev + 1;
+          return Math.min(replayEnd || snapshots.length - 1, prev + 1);
         });
-      }, 1500);
+      }, intervalMs);
     }
     return () => {
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
     };
-  }, [replayPlaying, snapshots.length]);
+  }, [replayPlaying, snapshots.length, replaySpeed, replayEnd]);
+
+  useEffect(() => {
+    // sync replay bounds when snapshots load/change
+    setReplayStart(0);
+    setReplayEnd(Math.max(0, snapshots.length - 1));
+    setReplayIndex(0);
+  }, [snapshots.length]);
 
   // Toggle replay mode
   const toggleReplay = async () => {
@@ -1654,6 +1670,26 @@ function GexHeatmapView() {
           </svg>
         </button>
 
+        {/* ── Tesseract / 3D view toggle ── */}
+        <button
+          onClick={() => setTesseractOpen((v) => !v)}
+          title={tesseractOpen ? "Close Tesseract 3D" : "Open Tesseract 3D"}
+          className={`flex items-center justify-center rounded-lg border h-8 w-8 transition-all ${
+            tesseractOpen
+              ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-400"
+              : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--foreground)] hover:bg-[var(--panel)] hover:border-cyan-500/30"
+          }`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2 L20 6 L20 18 L12 22 L4 18 L4 6 Z" />
+            <path d="M12 2 L12 12" />
+            <path d="M20 6 L12 12" />
+            <path d="M4 6 L12 12" />
+            <path d="M20 18 L12 12" />
+            <path d="M4 18 L12 12" />
+          </svg>
+        </button>
+
         {/* ── Metric buttons ── */}
         <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1">
           <button
@@ -1741,6 +1777,103 @@ function GexHeatmapView() {
           <span className="text-[11px] font-semibold text-cyan-400 ml-1">
             {replayIndex + 1}/{snapshots.length}
           </span>
+        </div>
+      )}
+
+      {/* Tesseract 3D modal */}
+      {tesseractOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-[92%] max-w-6xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Tesseract</p>
+                <h3 className="text-lg font-semibold">3D Gamma Grid — Price · Time · Net GEX</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setTesseractOpen(false)}
+                  className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1 text-sm hover:bg-[var(--panel)]"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {/* modal controls: playback + slider (use existing replay state) */}
+            <div className="mb-3 flex items-center gap-3">
+              {snapshots.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setReplayPlaying((v) => !v)}
+                    className="flex items-center justify-center h-8 w-8 rounded-full border border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-all"
+                  >
+                    {replayPlaying ? (
+                      <svg width="12" height="12" viewBox="0 0 10 10" fill="currentColor"><rect x="1" y="1" width="3" height="8" rx="0.5" /><rect x="6" y="1" width="3" height="8" rx="0.5" /></svg>
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9" /></svg>
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, snapshots.length - 1)}
+                    value={replayIndex}
+                    onChange={(e) => { setReplayPlaying(false); setReplayIndex(Number(e.target.value)); }}
+                    className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-[var(--muted)]">Speed</label>
+                    <select value={replaySpeed} onChange={(e) => setReplaySpeed(Number(e.target.value))} className="bg-[var(--panel-2)] border border-[var(--border)] rounded px-2 py-1 text-sm">
+                      <option value={0.5}>0.5x</option>
+                      <option value={1}>1x</option>
+                      <option value={2}>2x</option>
+                      <option value={3}>3x</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-[var(--muted)]">Range</label>
+                    <input type="number" min={0} max={Math.max(0, snapshots.length - 1)} value={replayStart} onChange={(e) => setReplayStart(Math.max(0, Math.min(Number(e.target.value)||0, Math.max(0, snapshots.length - 1))))} className="w-16 bg-[var(--panel-2)] border border-[var(--border)] rounded px-2 py-1 text-sm" />
+                    <span className="text-[11px]">—</span>
+                    <input type="number" min={0} max={Math.max(0, snapshots.length - 1)} value={replayEnd} onChange={(e) => setReplayEnd(Math.max(0, Math.min(Number(e.target.value)||0, Math.max(0, snapshots.length - 1))))} className="w-16 bg-[var(--panel-2)] border border-[var(--border)] rounded px-2 py-1 text-sm" />
+                  </div>
+                  <div className="text-[12px] text-[var(--muted)] w-28 text-right">
+                    {snapshots.length > 0 ? `${replayIndex + 1}/${snapshots.length}` : "0/0"}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mb-3 flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-[var(--muted)]">Mode</label>
+                <select value={tessMode} onChange={(e) => setTessMode(e.target.value as any)} className="bg-[var(--panel-2)] border border-[var(--border)] rounded px-2 py-1 text-sm">
+                  <option value="surface">Surface</option>
+                  <option value="wire">Wire</option>
+                  <option value="points">Point Cloud</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-[var(--muted)]">Decimate</label>
+                <input type="range" min={1} max={8} value={tessDecimation} onChange={(e) => setTessDecimation(Number(e.target.value))} className="w-48" />
+                <div className="text-[11px] text-[var(--muted)] w-8 text-right">x{tessDecimation}</div>
+              </div>
+            </div>
+
+            <div className="h-[560px] rounded-lg bg-black/80 border border-[var(--border)] overflow-hidden">
+              { (replayActive && snapshots[replayIndex]) || data ? (
+                <Tesseract3D data={(replayActive && snapshots[replayIndex] ? snapshots[replayIndex].data : data) ?? null} frames={snapshots.map(s => s.data)} mode={tessMode} decimation={tessDecimation} playSpeed={replaySpeed} />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-[var(--muted)]">
+                  Loading heatmap snapshot…
+                </div>
+              )}
+            </div>
+
+            <p className="mt-3 text-sm text-[var(--muted)]">
+              X-axis: Price · Y-axis: Time · Z-axis: Net GEX. Use this view to inspect gamma node
+              magnitudes and transitions between positive/negative gamma regimes.
+            </p>
+          </div>
         </div>
       )}
 
@@ -3445,7 +3578,7 @@ function OptionsCalculatorView({ flows }: { flows: typeof mockFlowOrders }) {
 /* ================================================================
    ORDER FLOW TABLE
    ================================================================ */
-function FlowTable({ rows }: { rows: typeof mockFlowOrders }) {
+function FlowTable({ rows, isLive }: { rows: typeof mockFlowOrders; isLive?: boolean }) {
   type FlowRow = (typeof mockFlowOrders)[number];
   type SortKey =
     | "time"
@@ -3541,6 +3674,11 @@ function FlowTable({ rows }: { rows: typeof mockFlowOrders }) {
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     const list = [...rows];
+
+    // Preserve incoming order when live and sorting by time so SSE-prepended
+    // rows remain at the top and appear immediately to the user.
+    if (isLive && sortKey === "time") return list;
+
     list.sort((a, b) => {
       switch (sortKey) {
         case "time":
